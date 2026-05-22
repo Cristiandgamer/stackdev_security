@@ -1,0 +1,6 @@
+# Redirige todo al index.html para el SPA de React (React Router)
+Options -MultiViews
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [QSA,L]
