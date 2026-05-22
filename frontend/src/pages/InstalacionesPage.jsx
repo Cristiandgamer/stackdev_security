@@ -105,7 +105,7 @@ function PuntosModal({ instalacion, onClose }) {
   const { data: puntos, isLoading } = useQuery({
     queryKey: ['puntos', instalacion.id],
     queryFn: () => seguridadService.listarPuntos(instalacion.id),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { mutate: crear, isPending } = useMutation({
@@ -207,7 +207,7 @@ export default function InstalacionesPage() {
   const { data: instalaciones, isLoading } = useQuery({
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones(),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { mutate: eliminar } = useMutation({

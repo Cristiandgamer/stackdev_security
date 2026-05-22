@@ -77,7 +77,7 @@ function IncidenteCard({ inc, isAdmin, onUpdate }) {
             )}
           </div>
 
-          {inc.archivos?.length > 0 && (
+          {Array.isArray(inc.archivos) && inc.archivos.length > 0 && (
             <div>
               <p className="label">Archivos adjuntos</p>
               <div className="flex flex-wrap gap-2">
@@ -305,13 +305,13 @@ export default function IncidentesPage() {
       estado: filtroEstado || undefined,
       severidad: filtroSeveridad || undefined,
     }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: instalaciones } = useQuery({
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones({ activa: true }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   return (

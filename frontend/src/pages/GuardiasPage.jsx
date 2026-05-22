@@ -154,19 +154,19 @@ export default function GuardiasPage() {
   const { data: guardias, isLoading } = useQuery({
     queryKey: ['guardias'],
     queryFn: () => seguridadService.listarGuardias(),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: usuarios, isLoading: isUsersLoading } = useQuery({
     queryKey: ['usuarios'],
     queryFn: () => usuariosService.listar(),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: instalaciones, isLoading: isInstalacionesLoading } = useQuery({
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones(),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { mutate: toggleActivo } = useMutation({

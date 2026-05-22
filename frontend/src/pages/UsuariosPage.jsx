@@ -114,7 +114,7 @@ export default function UsuariosPage() {
   const { data: usuarios, isLoading } = useQuery({
     queryKey: ['usuarios'],
     queryFn: () => usuariosService.listar(),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { mutate: toggleActivo } = useMutation({

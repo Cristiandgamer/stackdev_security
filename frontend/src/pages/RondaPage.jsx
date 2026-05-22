@@ -491,9 +491,7 @@ export default function RondaPage() {
   })
 
   useEffect(() => {
-    if (turno?.puntos) {
-      setPuntos(turno.puntos)
-    }
+    setPuntos(Array.isArray(turno?.puntos) ? turno.puntos : [])
   }, [turno])
 
   const onVerificado = useCallback((puntoId) => {

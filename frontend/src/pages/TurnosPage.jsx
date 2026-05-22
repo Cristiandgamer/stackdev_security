@@ -131,19 +131,19 @@ export default function TurnosPage() {
   const { data: turnos, isLoading } = useQuery({
     queryKey: ['turnos', filtroEstado],
     queryFn: () => seguridadService.listarTurnos({ estado: filtroEstado || undefined }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: guardias } = useQuery({
     queryKey: ['guardias-activos'],
     queryFn: () => seguridadService.listarGuardias({ activo: true }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: instalaciones } = useQuery({
     queryKey: ['instalaciones-activas'],
     queryFn: () => seguridadService.listarInstalaciones({ activa: true }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ['turnos'] }); setModal(null) }

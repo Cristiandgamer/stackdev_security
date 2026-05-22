@@ -16,13 +16,13 @@ export default function AsistenciasPage() {
       skip: pagina * LIMIT,
       limit: LIMIT,
     }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: guardias } = useQuery({
     queryKey: ['guardias-activos'],
     queryFn: () => seguridadService.listarGuardias({ activo: true }),
-    select: r => r.data,
+    select: r => Array.isArray(r?.data) ? r.data : [],
   })
 
   return (

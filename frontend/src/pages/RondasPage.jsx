@@ -52,12 +52,12 @@ export default function RondasPage() {
   const { data: instalaciones, isLoading } = useQuery({
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones(),
-    select: (r) => r.data,
+    select: (r) => r.data ?? [],
   })
 
   const { data: rondas, refetch: refetchRondas, isFetching: loadingRondas } = useQuery({
     queryKey: ['rondas', selectedInst?.id],
-    queryFn: () => seguridadService.listarRondas(selectedInst.id).then(r => r.data),
+    queryFn: () => seguridadService.listarRondas(selectedInst.id).then(r => r.data ?? []),
     enabled: !!selectedInst,
   })
 
@@ -128,7 +128,7 @@ export default function RondasPage() {
         <EmptyState icon={Building2} title="No hay instalaciones" description="Crea una instalación antes de crear una ronda." />
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
-          {instalaciones.map((inst) => (
+          {instalaciones?.map((inst) => (
             <div key={inst.id} className="card p-5 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -158,7 +158,7 @@ export default function RondasPage() {
                 <EmptyState icon={MapPin} title="Sin rondas" description="No hay rondas activas para esta instalación." />
               ) : (
                 <div className="space-y-3">
-                  {rondas.map((ronda) => (
+                  {rondas?.map((ronda) => (
                     <div key={ronda.id} className="rounded-3xl border border-white/10 bg-[#0f2440] p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
