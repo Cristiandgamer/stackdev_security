@@ -5,6 +5,45 @@ import toast from 'react-hot-toast'
 import { seguridadService, usuariosService } from '../services/api'
 import { Modal, Spinner, PageHeader, EmptyState } from '../components/index.jsx'
 
+const cleanRut = (rut) => rut.replace(/[.\-\s]/g, '').toUpperCase().trim()
+
+const validarRut = (rut) => {
+  const clean = cleanRut(rut)
+  if (!/^\d{7,8}[0-9K]$/.test(clean)) return false
+  const body = clean.slice(0, -1)
+  const dv = clean.slice(-1)
+  let total = 0
+  let factor = 2
+
+  for (let i = body.length - 1; i >= 0; i--) {
+    total += Number(body[i]) * factor
+    factor = factor === 7 ? 2 : factor + 1
+  }
+
+  const expected = 11 - (total % 11)
+  const calcDv = expected === 11 ? '0' : expected === 10 ? 'K' : String(expected)
+  return dv === calcDv
+}
+
+const formatRut = (rut) => {
+  const clean = cleanRut(rut)
+  if (!validarRut(clean)) return null
+  const body = clean.slice(0, -1)
+  const dv = clean.slice(-1).toLowerCase()
+  const formattedBody = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${formattedBody}-${dv}`
+}
+
+const handleRutBlur = (rut, setForm, toast) => {
+  const value = rut || ''
+  const formatted = formatRut(value)
+  if (formatted) {
+    setForm((f) => ({ ...f, rut: formatted }))
+  } else if (value.trim()) {
+    toast.error('RUT inválido. Use formato 22.886.757-k')
+  }
+}
+
 function FormGuardia({ inicial, users, instalaciones, onClose, onSuccess }) {
   const [form, setForm] = useState(inicial || {
     usuario_id: '', instalacion_id: '', rut: '', telefono: '', email: '', certificaciones: ''
@@ -29,7 +68,21 @@ function FormGuardia({ inicial, users, instalaciones, onClose, onSuccess }) {
     if (!form.usuario_id) return toast.error('Seleccione el usuario creado')
     if (!form.instalacion_id) return toast.error('Seleccione la instalación')
     if (!form.rut.trim()) return toast.error('Ingrese el RUT')
-    mutate(form)
+
+    const rut = formatRut(form.rut)
+    if (!rut) return toast.error('RUT inválido. Use formato 22.886.757-k')
+
+    const payload = {
+      ...form,
+      usuario_id: Number(form.usuario_id),
+      instalacion_id: Number(form.instalacion_id),
+      rut,
+      telefono: form.telefono?.trim() || undefined,
+      email: form.email?.trim() || undefined,
+      certificaciones: form.certificaciones?.trim() || undefined,
+    }
+
+    mutate(payload)
   }
 
   const campo = (label, key, opts = {}) => (
@@ -70,7 +123,10 @@ function FormGuardia({ inicial, users, instalaciones, onClose, onSuccess }) {
       </div>
       <p className="text-sm text-[#94a3b8]">El nombre y apellido se completan según el usuario seleccionado.</p>
       <div className="grid grid-cols-2 gap-4">
-        {campo('RUT chileno *', 'rut', { placeholder: '12.345.678-9' })}
+        {campo('RUT chileno *', 'rut', {
+          placeholder: '12.345.678-9',
+          onBlur: () => handleRutBlur(form.rut, setForm, toast),
+        })}
         {campo('Teléfono', 'telefono', { placeholder: '+56 9 1234 5678' })}
       </div>
       {campo('Email', 'email', { placeholder: 'guardia@empresa.cl', type: 'email' })}
