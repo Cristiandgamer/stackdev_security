@@ -52,12 +52,13 @@ export default function RondasPage() {
   const { data: instalaciones, isLoading } = useQuery({
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones(),
-    select: (r) => r.data ?? [],
+    select: (r) => Array.isArray(r?.data) ? r.data : [],
   })
 
   const { data: rondas, refetch: refetchRondas, isFetching: loadingRondas } = useQuery({
     queryKey: ['rondas', selectedInst?.id],
-    queryFn: () => seguridadService.listarRondas(selectedInst.id).then(r => r.data ?? []),
+    queryFn: () => seguridadService.listarRondas(selectedInst.id),
+    select: (r) => Array.isArray(r?.data) ? r.data : [],
     enabled: !!selectedInst,
   })
 
