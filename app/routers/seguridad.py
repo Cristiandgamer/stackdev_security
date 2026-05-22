@@ -212,7 +212,10 @@ def listar_guardias(db: Session = Depends(get_db), _=Depends(require_supervisor)
 
 @router.post("/guardias", response_model=GuardiaOut, status_code=201)
 def crear_guardia(data: GuardiaCreate, db: Session = Depends(get_db), _=Depends(require_supervisor)):
-    if db.query(Guardia).filter(Guardia.rut == data.rut).first():
+    if not data.rut and not data.usuario_id:
+        raise HTTPException(422, "Se requiere RUT o usuario_id para crear un guardia")
+
+    if data.rut and db.query(Guardia).filter(Guardia.rut == data.rut).first():
         raise HTTPException(400, "RUT ya registrado")
 
     payload = data.model_dump(exclude_none=True)

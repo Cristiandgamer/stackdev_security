@@ -91,12 +91,15 @@ class GuardiaBase(BaseModel):
     @field_validator("rut")
     @classmethod
     def validate_rut(cls, v):
+        if v is None:
+            return v
         if not validar_rut(v):
             raise ValueError("RUT chileno inválido")
         return formatear_rut(v)
 
 
 class GuardiaCreate(GuardiaBase):
+    rut: Optional[str] = None
     usuario_id: Optional[int] = None
     instalacion_id: Optional[int] = None
     nombre: Optional[str] = None
