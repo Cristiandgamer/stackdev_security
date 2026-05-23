@@ -139,11 +139,13 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
     if (!startDateTime || !endDateTime || startDateTime >= endDateTime) return toast.error('Seleccione un rango de tiempo válido')
 
     mutate({
-      ...form,
       guardia_id: Number(form.guardia_id),
       instalacion_id: Number(form.instalacion_id),
       fecha_inicio: startDateTime.toISOString(),
       fecha_fin: endDateTime.toISOString(),
+      tipo: form.tipo,
+      estado: form.estado,
+      notas: form.notas,
     })
   }
 
