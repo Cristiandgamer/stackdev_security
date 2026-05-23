@@ -20,6 +20,7 @@ def ensure_missing_columns():
             ("usuarios", "apellido", "VARCHAR(100)"),
             ("usuarios", "username", "VARCHAR(80)"),
             ("guardias", "instalacion_id", "INT"),
+            ("puntos_control", "ronda_id", "INT"),
         ]
         for table, column, ddl_type in checks:
             result = conn.execute(text(
