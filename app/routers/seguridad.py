@@ -276,20 +276,20 @@ def eliminar_guardia(guardia_id: int, db: Session = Depends(get_db), _=Depends(r
 
 # ── Turnos ─────────────────────────────────────────────────────────────────────
 
-@router.get("/turnos/mi-activo", response_model=TurnoDetalleOut)
+@router.get("/turnos/mi-activo", response_model=Optional[TurnoDetalleOut])
 def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from app.models.seguridad import Guardia
 
     guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
     if not guardia:
-        raise HTTPException(404, "No se encontró guardia asociado al usuario")
+        return None
 
     turno = db.query(Turno).filter(
         Turno.guardia_id == guardia.id,
         Turno.estado == "en_curso"
     ).first()
     if not turno:
-        raise HTTPException(404, "No hay turno en curso")
+        return None
 
     instalacion = turno.instalacion
     ronda = db.query(Ronda).filter(
