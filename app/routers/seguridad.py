@@ -288,6 +288,24 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
         Turno.guardia_id == guardia.id,
         Turno.estado == "en_curso"
     ).first()
+
+    if not turno:
+        ahora = datetime.utcnow()
+        turno = db.query(Turno).filter(
+            Turno.guardia_id == guardia.id,
+            Turno.estado == "programado",
+            Turno.fecha_inicio <= ahora,
+            Turno.fecha_fin >= ahora,
+        ).order_by(Turno.fecha_inicio.asc()).first()
+
+    if not turno:
+        ahora = datetime.utcnow()
+        turno = db.query(Turno).filter(
+            Turno.guardia_id == guardia.id,
+            Turno.estado == "programado",
+            Turno.fecha_inicio >= ahora,
+        ).order_by(Turno.fecha_inicio.asc()).first()
+
     if not turno:
         raise HTTPException(status_code=404, detail="No hay turno en curso")
 
