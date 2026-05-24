@@ -294,7 +294,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
         </button>
       </div>
     </form>
-}
+  )}
 
 export default function TurnosPage() {
   const qc = useQueryClient()
