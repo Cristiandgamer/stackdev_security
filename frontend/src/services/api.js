@@ -80,12 +80,9 @@ export const seguridadService = {
   listarIncidentes: (params) => api.get("/incidentes", { params }),
   crearIncidente: (d) => api.post("/incidentes", d),
   actualizarIncidente: (id, d) => api.put(`/incidentes/${id}`, d),
-  subirArchivoIncidente: (incidenteId, file) => {
-    const form = new FormData();
-    form.append("archivo", file);
-    return api.post(`/incidentes/${incidenteId}/archivos`, form);
-  },
-
+  subirArchivoIncidente: (incidenteId, file) => api.post(`/incidentes/${incidenteId}/archivos`, file, {
+    headers: { 'Content-Type': file.type || 'application/octet-stream' }
+  }),
   // Notificaciones
   listarNotificaciones: (params) => api.get("/notificaciones", { params }),
   marcarLeida: (id) => api.post(`/notificaciones/${id}/leer`),
@@ -103,3 +100,4 @@ export const usuariosService = {
 };
 
 export default api;
+

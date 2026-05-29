@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { UserCog, Plus, Pencil, ToggleLeft, ToggleRight, Search, Shield, Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { usuariosService } from '../services/api'
+import { usuariosService } from './services/api'
 import { useAuthStore } from '../store/authStore'
 import { Modal, Spinner, PageHeader, EmptyState } from '../components/index.jsx'
 

@@ -115,53 +115,59 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-[#071129] rounded-2xl w-full max-w-5xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 bg-[#0f2440]">
-          <h3 className="text-white font-semibold">Crear ronda — {instalacion.nombre}</h3>
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-gradient-to-br from-[#1e2d3d] to-[#263548] border border-[#2d5490]/30 rounded-2xl w-full max-w-5xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+        <div className="flex items-center justify-between px-6 py-5 bg-black/20 border-b border-[#2d5490]/20">
+          <h3 className="text-white font-bold text-lg">Crear ronda — {instalacion.nombre}</h3>
           <div className="flex items-center gap-2">
-            <button onClick={() => { crearArea() }} className="btn-ghost">Crear área desde centro</button>
-            <button onClick={onClose} className="btn-secondary">Cerrar</button>
+            <button onClick={() => { crearArea() }} className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium">
+              Crear área desde centro
+            </button>
+            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium">
+              Cerrar
+            </button>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-4 p-4">
-          <div className="col-span-2 h-[420px] rounded-lg overflow-hidden">
+        <div className="grid grid-cols-3 gap-4 p-6">
+          <div className="col-span-2 h-[420px] rounded-xl overflow-hidden border border-[#2d5490]/20">
             <div ref={mapContainer} className="w-full h-full" />
           </div>
-          <div className="col-span-1 space-y-3">
+          <div className="col-span-1 space-y-4">
             <div>
               <label className="label">Nombre</label>
-              <input className="input-field" value={nombre} onChange={e => setNombre(e.target.value)} />
+              <input className="input-field" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre de la ronda" />
             </div>
             <div>
               <label className="label">Descripción</label>
-              <textarea className="input-field resize-none" rows={3} value={descripcion} onChange={e => setDescripcion(e.target.value)} />
+              <textarea className="input-field resize-none" rows={3} value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Descripción de la ronda" />
             </div>
 
-            <div className="border-t border-white/10 pt-3">
-              <h4 className="text-white font-semibold mb-2">Puntos ({puntos.length})</h4>
-              <div className="max-h-56 overflow-y-auto space-y-2">
+            <div className="border-t border-[#2d5490]/20 pt-4">
+              <h4 className="text-white font-semibold mb-3">Puntos ({puntos.length})</h4>
+              <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
                 {puntos.map((p, idx) => (
-                  <div key={p.id} className="flex items-center justify-between bg-[#10243a] p-2 rounded-lg">
+                  <div key={p.id} className="flex items-center justify-between bg-[#2d5490]/20 p-3 rounded-lg border border-[#2d5490]/10 hover:border-[#2d5490]/30 transition-colors">
                     <div>
                       <div className="text-white font-medium">Punto {idx+1}</div>
-                      <div className="text-[#94a3b8] text-sm">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</div>
+                      <div className="text-[#94a3b8] text-xs">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => removePunto(p.id)} className="btn-ghost">Eliminar</button>
-                    </div>
+                    <button onClick={() => removePunto(p.id)} className="text-[#94a3b8] hover:text-red-400 transition-colors text-sm font-medium">
+                      Eliminar
+                    </button>
                   </div>
                 ))}
               </div>
 
-              <div className="mt-3">
-                <p className="text-[#94a3b8] text-sm">Haz clic en el mapa para agregar puntos. Puedes mover el mapa y usar "Crear área desde centro" para definir la geocerca.</p>
+              <div className="mt-4 p-3 bg-[#2d5490]/10 border border-[#2d5490]/20 rounded-lg">
+                <p className="text-[#94a3b8] text-xs leading-relaxed">
+                  💡 Haz clic en el mapa para agregar puntos. Puedes mover el mapa y usar "Crear área desde centro" para definir la geocerca.
+                </p>
               </div>
             </div>
 
-            <div className="pt-3">
-              <button onClick={handleCrear} className="btn-primary w-full">Crear ronda</button>
-            </div>
+            <button onClick={handleCrear} className="btn-primary w-full mt-4">
+              ✓ Crear ronda
+            </button>
           </div>
         </div>
       </div>
