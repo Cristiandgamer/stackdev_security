@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import FileResponse as FastAPIFileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -21,7 +22,7 @@ from app.schemas.schemas import (
     GuardiaCreate, GuardiaUpdate, GuardiaOut,
     TurnoCreate, TurnoUpdate, TurnoOut, TurnoDetalleOut,
     AsistenciaOut, IncidenteCreate, IncidenteUpdate, IncidenteOut,
-    NotificacionOut
+    NotificacionOut, ArchivoIncidenteOut
 )
 from app.schemas.schemas import RondaCreate, RondaOut, RondaUpdate
 from app.services.seguridad_service import (
@@ -29,6 +30,34 @@ from app.services.seguridad_service import (
 )
 
 router = APIRouter()
+
+# ── Extensiones permitidas para upload ────────────────────────────────────────
+EXTENSIONES_PERMITIDAS = {
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".pdf", ".doc", ".docx", ".txt",
+}
+MAX_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _validar_archivo(archivo: UploadFile) -> None:
+    ext = os.path.splitext(archivo.filename or "")[1].lower()
+    if ext not in EXTENSIONES_PERMITIDAS:
+        raise HTTPException(
+            400,
+            f"Tipo de archivo no permitido ({ext}). "
+            f"Permitidos: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}"
+        )
+
+
+def _guardar_archivo(archivo: UploadFile) -> tuple[str, str]:
+    """Guarda el archivo en disco y retorna (nombre_unico, ruta_relativa)."""
+    ext = os.path.splitext(archivo.filename or "")[1].lower()
+    nombre_unico = f"{uuid.uuid4()}{ext}"
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    ruta_fisica = os.path.join(settings.UPLOAD_DIR, nombre_unico)
+    with open(ruta_fisica, "wb") as f:
+        shutil.copyfileobj(archivo.file, f)
+    return nombre_unico, f"/uploads/{nombre_unico}"
 
 
 # ── Instalaciones ──────────────────────────────────────────────────────────────
@@ -78,8 +107,7 @@ def listar_puntos(inst_id: int, db: Session = Depends(get_db), _=Depends(require
     ).order_by(PuntoControl.orden).all()
 
 
-# ── Rondas ───────────────────────────────────────────────────────────────────
-
+# ── Rondas ─────────────────────────────────────────────────────────────────────
 
 @router.get("/instalaciones/{inst_id}/rondas", response_model=List[RondaOut])
 def listar_rondas(inst_id: int, db: Session = Depends(get_db), _=Depends(require_any)):
@@ -153,6 +181,30 @@ def regenerar_qr(punto_id: int, db: Session = Depends(get_db), _=Depends(require
     punto.qr_token = generar_qr_token()
     db.commit()
     return {"qr_token": punto.qr_token}
+
+
+@router.get("/puntos-control/{punto_id}/qr-imagen")
+def qr_imagen(punto_id: int, db: Session = Depends(get_db), _=Depends(require_supervisor)):
+    """Genera y devuelve la imagen QR del punto de control."""
+    import qrcode
+    import io
+    from fastapi.responses import StreamingResponse
+
+    punto = db.query(PuntoControl).filter(PuntoControl.id == punto_id).first()
+    if not punto:
+        raise HTTPException(404, "Punto no encontrado")
+    if not punto.qr_token:
+        raise HTTPException(400, "El punto no tiene token QR. Regenere el QR primero.")
+
+    img = qrcode.make(punto.qr_token)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="qr_punto_{punto_id}.png"'},
+    )
 
 
 # ── Verificaciones / Rondas ────────────────────────────────────────────────────
@@ -278,8 +330,6 @@ def eliminar_guardia(guardia_id: int, db: Session = Depends(get_db), _=Depends(r
 
 @router.get("/turnos/mi-activo", response_model=TurnoDetalleOut)
 def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    from app.models.seguridad import Guardia
-
     guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
     if not guardia:
         raise HTTPException(status_code=404, detail="No se encontró guardia asociado al usuario")
@@ -320,24 +370,25 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
         PuntoControl.activo == True
     ).order_by(PuntoControl.orden).all()
 
-    verificados = {v.punto_control_id for v in db.query(VerificacionPunto).filter(VerificacionPunto.turno_id == turno.id).all()}
+    verificados = {
+        v.punto_control_id
+        for v in db.query(VerificacionPunto).filter(VerificacionPunto.turno_id == turno.id).all()
+    }
     puntos_data = [
         {
-            **{
-                "id": p.id,
-                "instalacion_id": p.instalacion_id,
-                "ronda_id": p.ronda_id,
-                "nombre": p.nombre,
-                "descripcion": p.descripcion,
-                "latitud": p.latitud,
-                "longitud": p.longitud,
-                "radio_metros": p.radio_metros,
-                "orden": p.orden,
-                "qr_token": p.qr_token,
-                "activo": p.activo,
-                "created_at": p.created_at,
-            },
-            "verificado": p.id in verificados
+            "id": p.id,
+            "instalacion_id": p.instalacion_id,
+            "ronda_id": p.ronda_id,
+            "nombre": p.nombre,
+            "descripcion": p.descripcion,
+            "latitud": p.latitud,
+            "longitud": p.longitud,
+            "radio_metros": p.radio_metros,
+            "orden": p.orden,
+            "qr_token": p.qr_token,
+            "activo": p.activo,
+            "created_at": p.created_at,
+            "verificado": p.id in verificados,
         }
         for p in puntos
     ]
@@ -511,33 +562,52 @@ def actualizar_incidente(incidente_id: int, data: IncidenteUpdate, db: Session =
     return incidente
 
 
-@router.post("/incidentes/{incidente_id}/archivos")
-async def subir_archivo(
+@router.post(
+    "/incidentes/{incidente_id}/archivos",
+    response_model=List[ArchivoIncidenteOut],
+    status_code=201,
+)
+async def subir_archivos_incidente(
     incidente_id: int,
-    archivo: UploadFile = File(...),
+    archivos: List[UploadFile] = File(..., description="Uno o más archivos adjuntos"),
     db: Session = Depends(get_db),
-    _=Depends(require_any)
+    _=Depends(require_any),
 ):
+    """
+    Sube uno o varios archivos a un incidente.
+    Acepta: imágenes (JPG, PNG, WEBP, GIF), PDF, DOC, DOCX, TXT.
+    Máximo definido por MAX_UPLOAD_MB en .env (defecto 10 MB por archivo).
+    """
     incidente = db.query(Incidente).filter(Incidente.id == incidente_id).first()
     if not incidente:
         raise HTTPException(404, "Incidente no encontrado")
 
-    ext = os.path.splitext(archivo.filename)[1]
-    nombre_unico = f"{uuid.uuid4()}{ext}"
-    ruta = os.path.join(settings.UPLOAD_DIR, nombre_unico)
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    with open(ruta, "wb") as f:
-        shutil.copyfileobj(archivo.file, f)
+    if not archivos:
+        raise HTTPException(400, "Debe enviar al menos un archivo")
 
-    registro = ArchivoIncidente(
-        incidente_id=incidente_id,
-        nombre_archivo=archivo.filename,
-        ruta=f"/uploads/{nombre_unico}",
-        tipo_mime=archivo.content_type,
-    )
-    db.add(registro)
+    registros: List[ArchivoIncidente] = []
+
+    for archivo in archivos:
+        # Validar extensión
+        _validar_archivo(archivo)
+
+        # Guardar en disco
+        nombre_unico, ruta_relativa = _guardar_archivo(archivo)
+
+        registro = ArchivoIncidente(
+            incidente_id=incidente_id,
+            nombre_archivo=archivo.filename,
+            ruta=ruta_relativa,
+            tipo_mime=archivo.content_type or "application/octet-stream",
+        )
+        db.add(registro)
+        registros.append(registro)
+
     db.commit()
-    return {"url": f"/uploads/{nombre_unico}", "nombre": archivo.filename}
+    for r in registros:
+        db.refresh(r)
+
+    return registros
 
 
 # ── Notificaciones ─────────────────────────────────────────────────────────────
@@ -568,16 +638,21 @@ def marcar_leida(notif_id: int, db: Session = Depends(get_db), current_user=Depe
 def dashboard_stats(db: Session = Depends(get_db), _=Depends(require_supervisor)):
     from sqlalchemy import func
     return {
-        "total_guardias": db.query(Guardia).filter(Guardia.activo == True).count(),
+        "total_guardias":      db.query(Guardia).filter(Guardia.activo == True).count(),
+        "guardias_activos":    db.query(Guardia).filter(Guardia.activo == True).count(),
         "total_instalaciones": db.query(Instalacion).filter(Instalacion.activa == True).count(),
-        "turnos_hoy": db.query(Turno).filter(
-            func.date(Turno.fecha_inicio) == func.curdate()
-        ).count(),
+        "instalaciones_activas": db.query(Instalacion).filter(Instalacion.activa == True).count(),
+        "turnos_hoy":          db.query(Turno).filter(
+                                   func.date(Turno.fecha_inicio) == func.curdate()
+                               ).count(),
         "incidentes_abiertos": db.query(Incidente).filter(
-            Incidente.estado == "abierto"
-        ).count(),
+                                   Incidente.estado.in_(["abierto", "reportado"])
+                               ).count(),
         "incidentes_criticos": db.query(Incidente).filter(
-            Incidente.severidad == "critica",
-            Incidente.estado != "cerrado"
-        ).count(),
+                                   Incidente.severidad == "critica",
+                                   Incidente.estado.notin_(["cerrado", "resuelto"])
+                               ).count(),
+        "verificaciones_hoy":  db.query(VerificacionPunto).filter(
+                                   func.date(VerificacionPunto.verificado_en) == func.curdate()
+                               ).count(),
     }

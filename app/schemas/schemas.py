@@ -300,6 +300,20 @@ class AsistenciaOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── ArchivoIncidente ───────────────────────────────────────────────────────────
+
+class ArchivoIncidenteOut(BaseModel):
+    """Representación pública de un archivo adjunto a un incidente."""
+    id: int
+    incidente_id: int
+    nombre_archivo: Optional[str] = None
+    ruta: str
+    tipo_mime: Optional[str] = None
+    subido_en: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Incidente ──────────────────────────────────────────────────────────────────
 
 class IncidenteBase(BaseModel):
@@ -329,6 +343,8 @@ class IncidenteOut(IncidenteBase):
     estado: str
     reportado_en: datetime
     resuelto_en: Optional[datetime] = None
+    # Lista de archivos adjuntos — puede estar vacía si no se han subido archivos
+    archivos: List[ArchivoIncidenteOut] = []
 
     model_config = {"from_attributes": True}
 
