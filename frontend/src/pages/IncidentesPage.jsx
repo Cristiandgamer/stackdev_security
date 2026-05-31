@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Plus, Filter, Upload, X,
-  FileText, Image, ExternalLink, ChevronDown, ChevronUp,
-  Calendar, MapPin, User, Building2
+  FileText, Image as ImageIcon, Video, File,
+  ExternalLink, Download, MapPin, Building2, Calendar,
+  ChevronDown, ChevronUp,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
@@ -28,98 +29,189 @@ const ESTADO_BADGE = {
   en_proceso:   'badge-blue',
 }
 
-const TIPOS = ['seguridad', 'accidente', 'emergencia', 'otro']
+const TIPOS      = ['seguridad', 'accidente', 'emergencia', 'otro']
 const SEVERIDADES = ['baja', 'media', 'alta', 'critica']
 
-// ── Helper: formatear fecha segura ────────────────────────────────────────────
+// Tipos MIME agrupados
+const ES_IMAGEN = (m = '') => /^image\//.test(m)
+const ES_VIDEO  = (m = '') => /^video\//.test(m)
+const ES_PDF    = (m = '') => m === 'application/pdf'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function formatFecha(valor, opts = {}) {
   if (!valor) return '—'
   const d = new Date(valor)
   if (isNaN(d.getTime())) return '—'
-  const defOpts = { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }
-  return d.toLocaleString('es-CL', { ...defOpts, ...opts })
+  const def = { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }
+  return d.toLocaleString('es-CL', { ...def, ...opts })
 }
 
-// ── Helper: ícono por tipo MIME ───────────────────────────────────────────────
-function FileIcon({ mime = '' }) {
-  if (mime.startsWith('image/')) return <Image className="w-4 h-4 flex-shrink-0" />
-  return <FileText className="w-4 h-4 flex-shrink-0" />
+/** Construye la URL absoluta de un archivo guardado en /uploads */
+function urlArchivo(ruta = '') {
+  if (ruta.startsWith('http')) return ruta
+  const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/api\/?$/, '')
+  return `${base}${ruta}`
 }
 
-// ── Visor de archivos (imágenes inline, PDF en nueva pestaña) ─────────────────
+// ── Ícono según MIME ──────────────────────────────────────────────────────────
+function MimeIcon({ mime = '', className = 'w-5 h-5' }) {
+  if (ES_IMAGEN(mime)) return <ImageIcon className={className} />
+  if (ES_VIDEO(mime))  return <Video     className={className} />
+  if (ES_PDF(mime))    return <FileText  className={className} />
+  return <File className={className} />
+}
+
+// ── Visor de archivos ─────────────────────────────────────────────────────────
 function VisorArchivos({ archivos = [] }) {
-  const [activo, setActivo] = useState(null)
+  const [lightbox, setLightbox] = useState(null) // { url, mime, nombre }
 
   if (!archivos.length) return null
 
-  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || ''
-
-  const urlCompleta = (ruta) =>
-    ruta.startsWith('http') ? ruta : `${baseUrl}${ruta}`
-
   return (
-    <div className="space-y-2">
-      <p className="label">Archivos adjuntos ({archivos.length})</p>
+    <div className="space-y-3">
+      <p className="label">
+        Archivos adjuntos
+        <span className="ml-2 text-xs text-[#64748b]">({archivos.length})</span>
+      </p>
 
-      <div className="flex flex-wrap gap-2">
+      {/* Grid de previews */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {archivos.map((a) => {
-          const url = urlCompleta(a.ruta)
-          const esImagen = (a.tipo_mime || '').startsWith('image/')
-          const esPDF    = (a.tipo_mime || '') === 'application/pdf'
+          const url    = urlArchivo(a.ruta)
+          const mime   = a.tipo_mime || ''
+          const nombre = a.nombre_archivo || `Archivo ${a.id}`
 
+          /* ── Imagen → thumbnail clicable ── */
+          if (ES_IMAGEN(mime)) {
+            return (
+              <button
+                key={a.id}
+                onClick={() => setLightbox({ url, mime, nombre })}
+                className="relative group rounded-xl overflow-hidden border border-white/10 aspect-square bg-[#263548] hover:border-brand/60 transition-colors"
+                title={nombre}
+              >
+                <img
+                  src={url}
+                  alt={nombre}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                  <ExternalLink className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <p className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] text-white bg-black/50 truncate">
+                  {nombre}
+                </p>
+              </button>
+            )
+          }
+
+          /* ── Vídeo → thumbnail con play ── */
+          if (ES_VIDEO(mime)) {
+            return (
+              <button
+                key={a.id}
+                onClick={() => setLightbox({ url, mime, nombre })}
+                className="relative group rounded-xl overflow-hidden border border-white/10 aspect-square bg-[#263548] hover:border-brand/60 transition-colors flex flex-col items-center justify-center gap-2"
+                title={nombre}
+              >
+                <Video className="w-8 h-8 text-brand" />
+                <p className="text-[10px] text-[#94a3b8] px-2 truncate w-full text-center">{nombre}</p>
+              </button>
+            )
+          }
+
+          /* ── PDF / DOC → botón con descarga y nueva pestaña ── */
           return (
-            <button
+            <a
               key={a.id}
-              onClick={() => esImagen ? setActivo(url) : window.open(url, '_blank')}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#263548] border border-white/10
-                         hover:border-brand/50 transition-colors text-sm text-[#94a3b8] hover:text-white"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-col items-center justify-center gap-2 p-3 rounded-xl border border-white/10 bg-[#263548] hover:border-brand/60 transition-colors aspect-square text-center"
+              title={`Abrir ${nombre}`}
             >
-              <FileIcon mime={a.tipo_mime} />
-              <span className="truncate max-w-[160px]">
-                {a.nombre_archivo || `Archivo ${a.id}`}
+              <MimeIcon mime={mime} className="w-8 h-8 text-brand" />
+              <p className="text-[10px] text-[#94a3b8] line-clamp-2 w-full">{nombre}</p>
+              <span className="text-[9px] text-brand uppercase tracking-wide">
+                {ES_PDF(mime) ? 'PDF' : mime.split('/')[1]?.toUpperCase() || 'DOC'}
               </span>
-              <ExternalLink className="w-3 h-3 opacity-50" />
-            </button>
+            </a>
           )
         })}
       </div>
 
-      {/* Lightbox para imágenes */}
-      {activo && (
+      {/* Lightbox imagen */}
+      {lightbox && ES_IMAGEN(lightbox.mime) && (
         <div
           className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => setActivo(null)}
+          onClick={() => setLightbox(null)}
         >
           <button
-            className="absolute top-4 right-4 text-white/70 hover:text-white"
-            onClick={() => setActivo(null)}
+            className="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-black/40 rounded-xl"
+            onClick={() => setLightbox(null)}
+            aria-label="Cerrar"
           >
-            <X className="w-8 h-8" />
+            <X className="w-6 h-6" />
           </button>
+          <a
+            href={lightbox.url}
+            download
+            className="absolute top-4 left-4 p-2 text-white/70 hover:text-white bg-black/40 rounded-xl"
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Descargar"
+          >
+            <Download className="w-6 h-6" />
+          </a>
           <img
-            src={activo}
-            alt="Vista previa"
-            className="max-w-full max-h-[90vh] object-contain rounded-xl"
+            src={lightbox.url}
+            alt={lightbox.nombre}
+            className="max-w-full max-h-[88vh] object-contain rounded-xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
+          <p className="absolute bottom-4 text-white/60 text-sm">{lightbox.nombre}</p>
+        </div>
+      )}
+
+      {/* Lightbox vídeo */}
+      {lightbox && ES_VIDEO(lightbox.mime) && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-black/40 rounded-xl"
+            onClick={() => setLightbox(null)}
+            aria-label="Cerrar"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            src={lightbox.url}
+            controls
+            autoPlay
+            className="max-w-full max-h-[88vh] rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <p className="absolute bottom-4 text-white/60 text-sm">{lightbox.nombre}</p>
         </div>
       )}
     </div>
   )
 }
 
-// ── Card de incidente ─────────────────────────────────────────────────────────
-function IncidenteCard({ inc, isAdmin, onUpdate }) {
-  const [abrirDetalle, setAbrirDetalle] = useState(false)
+// ── Modal de detalle de incidente ─────────────────────────────────────────────
+function ModalDetalle({ inc, isAdmin, onClose, onUpdate }) {
   const [estado, setEstado] = useState(inc.estado)
-  const [expandido, setExpandido] = useState(false)
 
   const { mutate: actualizar, isPending } = useMutation({
     mutationFn: (data) => seguridadService.actualizarIncidente(inc.id, data),
     onSuccess: () => {
-      toast.success('Incidente actualizado')
-      setAbrirDetalle(false)
+      toast.success('Estado actualizado')
       onUpdate()
+      onClose()
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
   })
@@ -127,190 +219,231 @@ function IncidenteCard({ inc, isAdmin, onUpdate }) {
   const severidadEsAlta = inc.severidad === 'critica' || inc.severidad === 'alta'
 
   return (
-    <>
-      {/* Modal de detalle */}
-      <Modal open={abrirDetalle} onClose={() => setAbrirDetalle(false)} title="Detalle del incidente" size="lg">
-        <div className="space-y-5">
+    <div className="space-y-5">
 
-          {/* Badges de estado */}
-          <div className="flex flex-wrap gap-2">
-            <span className={SEVERIDAD_BADGE[inc.severidad] || 'badge-gray'}>
-              Severidad: {inc.severidad}
-            </span>
-            <span className={ESTADO_BADGE[inc.estado] || 'badge-gray'}>
-              Estado: {inc.estado}
-            </span>
-            {inc.tipo && (
-              <span className="badge-gray">{inc.tipo}</span>
-            )}
-          </div>
+      {/* Badges */}
+      <div className="flex flex-wrap gap-2">
+        <span className={`${SEVERIDAD_BADGE[inc.severidad] || 'badge-gray'} text-sm`}>
+          Severidad: {inc.severidad}
+        </span>
+        <span className={`${ESTADO_BADGE[inc.estado] || 'badge-gray'} text-sm`}>
+          Estado: {inc.estado}
+        </span>
+        {inc.tipo && <span className="badge-gray text-sm capitalize">{inc.tipo}</span>}
+      </div>
 
-          {/* Descripción */}
+      {/* Descripción */}
+      <div>
+        <p className="label">Descripción</p>
+        <p className="text-white text-base bg-[#0f1929] p-4 rounded-xl leading-relaxed border border-white/5">
+          {inc.descripcion || 'Sin descripción registrada.'}
+        </p>
+      </div>
+
+      {/* Metadatos: 2 columnas en desktop */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+        {/* Fecha reporte */}
+        <div className="flex items-start gap-3 bg-[#0f1929] rounded-xl p-3 border border-white/5">
+          <Calendar className="w-4 h-4 text-[#94a3b8] mt-0.5 flex-shrink-0" />
           <div>
-            <p className="label">Descripción</p>
-            <p className="text-white text-base bg-[#263548] p-4 rounded-xl leading-relaxed">
-              {inc.descripcion || 'Sin descripción.'}
-            </p>
+            <p className="text-[#94a3b8] text-xs mb-0.5">Fecha de reporte</p>
+            <p className="text-white text-sm font-medium">{formatFecha(inc.reportado_en)}</p>
           </div>
-
-          {/* Metadatos */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="flex items-start gap-2">
-              <Calendar className="w-4 h-4 text-[#94a3b8] mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="label text-xs">Fecha de reporte</p>
-                <p className="text-white text-sm">{formatFecha(inc.reportado_en)}</p>
-              </div>
-            </div>
-
-            {inc.resuelto_en && (
-              <div className="flex items-start gap-2">
-                <Calendar className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="label text-xs">Resuelto en</p>
-                  <p className="text-white text-sm">{formatFecha(inc.resuelto_en)}</p>
-                </div>
-              </div>
-            )}
-
-            {inc.instalacion && (
-              <div className="flex items-start gap-2">
-                <Building2 className="w-4 h-4 text-[#94a3b8] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="label text-xs">Instalación</p>
-                  <p className="text-white text-sm">{inc.instalacion?.nombre || `ID ${inc.instalacion_id}`}</p>
-                </div>
-              </div>
-            )}
-
-            {inc.latitud && inc.longitud && (
-              <div className="flex items-start gap-2">
-                <MapPin className="w-4 h-4 text-[#94a3b8] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="label text-xs">Coordenadas GPS</p>
-                  <p className="text-white text-sm">
-                    {Number(inc.latitud).toFixed(5)}, {Number(inc.longitud).toFixed(5)}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Archivos adjuntos */}
-          <VisorArchivos archivos={inc.archivos || []} />
-
-          {/* Cambiar estado (admin/supervisor) */}
-          {isAdmin && (
-            <div className="pt-4 border-t border-white/10 space-y-3">
-              <p className="label">Cambiar estado</p>
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="input-field"
-              >
-                {['reportado', 'investigando', 'resuelto', 'cerrado'].map((e) => (
-                  <option key={e} value={e}>
-                    {e.charAt(0).toUpperCase() + e.slice(1)}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => actualizar({ estado })}
-                disabled={isPending || estado === inc.estado}
-                className="btn-primary w-full"
-              >
-                {isPending ? 'Guardando...' : 'Guardar cambio de estado'}
-              </button>
-            </div>
-          )}
         </div>
+
+        {/* Fecha resolución */}
+        {inc.resuelto_en && (
+          <div className="flex items-start gap-3 bg-[#0f1929] rounded-xl p-3 border border-green-500/20">
+            <Calendar className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-[#94a3b8] text-xs mb-0.5">Resuelto en</p>
+              <p className="text-white text-sm font-medium">{formatFecha(inc.resuelto_en)}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Instalación */}
+        {(inc.instalacion || inc.instalacion_id) && (
+          <div className="flex items-start gap-3 bg-[#0f1929] rounded-xl p-3 border border-white/5">
+            <Building2 className="w-4 h-4 text-brand mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-[#94a3b8] text-xs mb-0.5">Instalación</p>
+              <p className="text-white text-sm font-medium">
+                {inc.instalacion?.nombre ?? `ID ${inc.instalacion_id}`}
+              </p>
+              {inc.instalacion?.direccion && (
+                <p className="text-[#94a3b8] text-xs mt-0.5">{inc.instalacion.direccion}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* GPS — solo si existe */}
+        {inc.latitud != null && inc.longitud != null && (
+          <div className="flex items-start gap-3 bg-[#0f1929] rounded-xl p-3 border border-white/5">
+            <MapPin className="w-4 h-4 text-[#94a3b8] mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-[#94a3b8] text-xs mb-0.5">Ubicación GPS</p>
+              <p className="text-white text-sm font-medium font-mono">
+                {Number(inc.latitud).toFixed(5)}, {Number(inc.longitud).toFixed(5)}
+              </p>
+              <a
+                href={`https://www.google.com/maps?q=${inc.latitud},${inc.longitud}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand text-xs flex items-center gap-1 mt-1 hover:underline"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Ver en Google Maps
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Archivos adjuntos */}
+      <VisorArchivos archivos={inc.archivos || []} />
+
+      {/* Cambiar estado (solo admin/supervisor) */}
+      {isAdmin && (
+        <div className="pt-4 border-t border-white/10 space-y-3">
+          <p className="label">Cambiar estado del incidente</p>
+          <select
+            value={estado}
+            onChange={(e) => setEstado(e.target.value)}
+            className="input-field"
+          >
+            {['reportado', 'investigando', 'resuelto', 'cerrado'].map((e) => (
+              <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => actualizar({ estado })}
+            disabled={isPending || estado === inc.estado}
+            className="btn-primary w-full"
+          >
+            {isPending ? 'Guardando…' : 'Guardar cambio de estado'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Tarjeta de incidente (lista) ──────────────────────────────────────────────
+function IncidenteCard({ inc, isAdmin, onUpdate }) {
+  const [abierto, setAbierto] = useState(false)
+  const severidadEsAlta = inc.severidad === 'critica' || inc.severidad === 'alta'
+
+  return (
+    <>
+      <Modal
+        open={abierto}
+        onClose={() => setAbierto(false)}
+        title={inc.titulo}
+        size="lg"
+      >
+        <ModalDetalle
+          inc={inc}
+          isAdmin={isAdmin}
+          onClose={() => setAbierto(false)}
+          onUpdate={onUpdate}
+        />
       </Modal>
 
-      {/* Tarjeta compacta */}
-      <div className={`card overflow-hidden transition-all ${
-        severidadEsAlta ? 'border-l-4 border-l-red-500' : ''
-      }`}>
-        <button
-          className="w-full flex items-start gap-4 p-5 text-left"
-          onClick={() => setAbrirDetalle(true)}
-        >
+      <button
+        className={`card w-full text-left p-5 hover:border-[#2d5490]/80 transition-colors
+          ${severidadEsAlta ? 'border-l-4 border-l-red-500' : ''}`}
+        onClick={() => setAbierto(true)}
+      >
+        <div className="flex items-start gap-4">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5
             ${severidadEsAlta ? 'bg-red-500/20' : 'bg-yellow-500/20'}`}>
             <AlertTriangle className={`w-5 h-5 ${severidadEsAlta ? 'text-red-400' : 'text-yellow-400'}`} />
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-white font-semibold text-lg truncate">{inc.titulo}</p>
+            <p className="text-white font-semibold text-base truncate">{inc.titulo}</p>
             {inc.descripcion && (
               <p className="text-[#94a3b8] text-sm line-clamp-2 mt-0.5">{inc.descripcion}</p>
             )}
 
-            <div className="flex flex-wrap gap-2 mt-2">
-              <span className={SEVERIDAD_BADGE[inc.severidad] || 'badge-gray'}>
-                {inc.severidad}
-              </span>
-              <span className={ESTADO_BADGE[inc.estado] || 'badge-gray'}>
-                {inc.estado}
-              </span>
-              {inc.archivos?.length > 0 && (
-                <span className="badge-gray">
-                  📎 {inc.archivos.length} archivo{inc.archivos.length > 1 ? 's' : ''}
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <span className={SEVERIDAD_BADGE[inc.severidad] || 'badge-gray'}>{inc.severidad}</span>
+              <span className={ESTADO_BADGE[inc.estado] || 'badge-gray'}>{inc.estado}</span>
+
+              {/* Instalación */}
+              {(inc.instalacion?.nombre) && (
+                <span className="badge-gray flex items-center gap-1">
+                  <Building2 className="w-3 h-3" />
+                  {inc.instalacion.nombre}
                 </span>
               )}
-              <span className="text-[#94a3b8] text-sm ml-auto">
+
+              {/* Archivos */}
+              {inc.archivos?.length > 0 && (
+                <span className="badge-gray">
+                  📎 {inc.archivos.length}
+                </span>
+              )}
+
+              {/* GPS */}
+              {inc.latitud != null && (
+                <span className="badge-gray flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  GPS
+                </span>
+              )}
+
+              <span className="text-[#94a3b8] text-xs ml-auto whitespace-nowrap">
                 {formatFecha(inc.reportado_en, { day: '2-digit', month: 'short', year: 'numeric' })}
               </span>
             </div>
           </div>
-        </button>
-      </div>
+        </div>
+      </button>
     </>
   )
 }
 
-// ── Formulario de nuevo incidente ─────────────────────────────────────────────
+// ── Formulario nuevo incidente ────────────────────────────────────────────────
 function NuevoIncidenteForm({ onClose, instalaciones }) {
   const qc = useQueryClient()
   const { user } = useAuthStore()
 
   const [form, setForm] = useState({
-    titulo: '',
-    descripcion: '',
-    tipo: 'seguridad',
-    severidad: 'media',
-    instalacion_id: '',
-    latitud: null,
-    longitud: null,
+    titulo: '', descripcion: '', tipo: 'seguridad',
+    severidad: 'media', instalacion_id: '',
+    latitud: null, longitud: null,
   })
-  const [archivos, setArchivos] = useState([])     // File[]
-  const [previews, setPreviews]  = useState([])     // { name, url, mime }[]
-  const [obtenGPS, setObtenGPS]  = useState(false)
+  const [archivos, setArchivos]   = useState([])   // File[]
+  const [previews, setPreviews]   = useState([])   // {name, mime, previewUrl|null}[]
+  const [obtenGPS, setObtenGPS]   = useState(false)
 
-  // ── Gestión de archivos ──────────────────────────────────────────────────────
+  // ── Archivos ──────────────────────────────────────────────────────────────
   const agregarArchivos = (nuevos) => {
     const lista = Array.from(nuevos)
-    setArchivos((prev) => [...prev, ...lista])
-
-    const prevsNuevos = lista.map((f) => ({
-      name: f.name,
-      mime: f.type,
-      url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
-    }))
-    setPreviews((prev) => [...prev, ...prevsNuevos])
+    setArchivos((p) => [...p, ...lista])
+    setPreviews((p) => [
+      ...p,
+      ...lista.map((f) => ({
+        name: f.name,
+        mime: f.type,
+        previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
+      })),
+    ])
   }
 
-  const quitarArchivo = (idx) => {
-    if (previews[idx]?.url) URL.revokeObjectURL(previews[idx].url)
-    setArchivos((prev) => prev.filter((_, i) => i !== idx))
-    setPreviews((prev) => prev.filter((_, i) => i !== idx))
+  const quitarArchivo = (i) => {
+    if (previews[i]?.previewUrl) URL.revokeObjectURL(previews[i].previewUrl)
+    setArchivos((p) => p.filter((_, j) => j !== i))
+    setPreviews((p) => p.filter((_, j) => j !== i))
   }
 
-  // ── GPS ──────────────────────────────────────────────────────────────────────
+  // ── GPS ───────────────────────────────────────────────────────────────────
   const obtenerGPS = () => {
-    if (!navigator.geolocation) {
-      toast.error('Geolocalización no disponible en este dispositivo')
-      return
-    }
+    if (!navigator.geolocation) return toast.error('Geolocalización no disponible')
     setObtenGPS(true)
     navigator.geolocation.getCurrentPosition(
       (p) => {
@@ -318,32 +451,25 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
         setObtenGPS(false)
         toast.success('Ubicación GPS capturada')
       },
-      (err) => {
-        setObtenGPS(false)
-        toast.error(`GPS: ${err.message || 'No se pudo obtener la ubicación'}`)
-      },
+      (e) => { setObtenGPS(false); toast.error(`GPS: ${e.message}`) },
       { enableHighAccuracy: true, timeout: 10000 }
     )
   }
 
-  // ── Envío ────────────────────────────────────────────────────────────────────
+  // ── Envío ─────────────────────────────────────────────────────────────────
   const { mutate, isPending } = useMutation({
     mutationFn: async (data) => {
-      // 1. Crear el incidente
       const res = await seguridadService.crearIncidente(data)
-      const id = res.data.id
-
-      // 2. Subir todos los archivos (uno por uno para compatibilidad con el endpoint)
-      for (const archivo of archivos) {
+      const id  = res.data.id
+      if (archivos.length > 0) {
         const fd = new FormData()
-        fd.append('archivo', archivo)
+        archivos.forEach((f) => fd.append('archivos', f))
         await seguridadService.subirArchivoIncidente(id, fd)
       }
-
       return res
     },
     onSuccess: () => {
-      toast.success('Incidente reportado correctamente')
+      toast.success('Incidente reportado')
       qc.invalidateQueries({ queryKey: ['incidentes'] })
       onClose()
     },
@@ -352,159 +478,103 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (!form.titulo.trim())        return toast.error('Ingrese un título')
-    if (!form.descripcion.trim())   return toast.error('Ingrese la descripción')
-    if (!form.instalacion_id)       return toast.error('Seleccione la instalación')
-
-    mutate({
-      ...form,
-      instalacion_id: Number(form.instalacion_id),
-      guardia_id: user?.guardia_id ?? undefined,
-    })
+    if (!form.titulo.trim())      return toast.error('Ingrese un título')
+    if (!form.descripcion.trim()) return toast.error('Ingrese la descripción')
+    if (!form.instalacion_id)     return toast.error('Seleccione la instalación')
+    mutate({ ...form, instalacion_id: Number(form.instalacion_id) })
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
 
-      {/* Título */}
       <div>
-        <label className="label">Título del incidente *</label>
-        <input
-          className="input-field"
-          placeholder="Ej: Persona sospechosa en entrada norte"
-          value={form.titulo}
-          maxLength={200}
-          onChange={(e) => setForm((f) => ({ ...f, titulo: e.target.value }))}
-        />
+        <label className="label">Título *</label>
+        <input className="input-field" placeholder="Ej: Persona sospechosa en entrada norte"
+          value={form.titulo} maxLength={200}
+          onChange={(e) => setForm((f) => ({ ...f, titulo: e.target.value }))} />
       </div>
 
-      {/* Tipo + Severidad */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Tipo *</label>
           <select className="input-field" value={form.tipo}
             onChange={(e) => setForm((f) => ({ ...f, tipo: e.target.value }))}>
-            {TIPOS.map((t) => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-            ))}
+            {TIPOS.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
           </select>
         </div>
         <div>
           <label className="label">Severidad *</label>
           <select className="input-field" value={form.severidad}
             onChange={(e) => setForm((f) => ({ ...f, severidad: e.target.value }))}>
-            {SEVERIDADES.map((s) => (
-              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-            ))}
+            {SEVERIDADES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
           </select>
         </div>
       </div>
 
-      {/* Instalación */}
       <div>
         <label className="label">Instalación *</label>
         <select className="input-field" value={form.instalacion_id}
           onChange={(e) => setForm((f) => ({ ...f, instalacion_id: e.target.value }))}>
           <option value="">Seleccionar instalación</option>
-          {instalaciones?.map((i) => (
-            <option key={i.id} value={i.id}>{i.nombre}</option>
-          ))}
+          {instalaciones?.map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}
         </select>
       </div>
 
-      {/* Descripción */}
       <div>
-        <label className="label">Descripción detallada *</label>
-        <textarea
-          className="input-field resize-none"
-          rows={4}
+        <label className="label">Descripción *</label>
+        <textarea className="input-field resize-none" rows={4}
           placeholder="Describa lo ocurrido con el mayor detalle posible…"
           value={form.descripcion}
-          onChange={(e) => setForm((f) => ({ ...f, descripcion: e.target.value }))}
-        />
+          onChange={(e) => setForm((f) => ({ ...f, descripcion: e.target.value }))} />
       </div>
 
       {/* GPS */}
-      <button
-        type="button"
-        onClick={obtenerGPS}
-        disabled={obtenGPS}
-        className="btn-secondary w-full"
-      >
-        {obtenGPS ? (
-          <>
-            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            Obteniendo ubicación…
-          </>
-        ) : form.latitud ? (
-          `📍 GPS capturado (${Number(form.latitud).toFixed(4)}, ${Number(form.longitud).toFixed(4)})`
-        ) : (
-          '📍 Capturar ubicación GPS (opcional)'
-        )}
+      <button type="button" onClick={obtenerGPS} disabled={obtenGPS} className="btn-secondary w-full">
+        {obtenGPS
+          ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Obteniendo…</>
+          : form.latitud
+            ? `📍 GPS: ${Number(form.latitud).toFixed(4)}, ${Number(form.longitud).toFixed(4)}`
+            : '📍 Capturar ubicación GPS (opcional)'}
       </button>
 
       {/* Zona de archivos */}
       <div>
         <label className="label">
-          Fotos / documentos (opcional) — puede seleccionar múltiples
+          Fotos, vídeos o documentos
+          <span className="text-xs text-[#64748b] ml-2">(opcional, múltiples)</span>
         </label>
 
-        {/* Drop zone */}
         <label
           className="flex flex-col items-center justify-center gap-2 w-full py-5 px-4
                      bg-[#0f1929] border-2 border-dashed border-[#2d5490]/60
                      rounded-xl hover:border-brand/60 transition-colors cursor-pointer"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault()
-            if (e.dataTransfer.files.length) agregarArchivos(e.dataTransfer.files)
-          }}
+          onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files.length) agregarArchivos(e.dataTransfer.files) }}
         >
           <Upload className="w-7 h-7 text-[#94a3b8]" />
           <span className="text-[#94a3b8] text-sm text-center leading-snug">
             Arrastra archivos aquí o haz clic para seleccionar<br />
-            <span className="text-xs opacity-70">Imágenes (JPG, PNG, WEBP) y PDF — sin límite de cantidad</span>
+            <span className="text-xs opacity-60">JPG · PNG · WEBP · MP4 · MOV · PDF · DOC — sin límite de cantidad</span>
           </span>
-          <input
-            type="file"
-            className="hidden"
-            multiple
-            accept="image/*,.pdf,.doc,.docx"
-            onChange={(e) => {
-              if (e.target.files?.length) agregarArchivos(e.target.files)
-              e.target.value = ''   // permite re-seleccionar el mismo archivo
-            }}
-          />
+          <input type="file" className="hidden" multiple
+            accept="image/*,video/*,.pdf,.doc,.docx,.txt"
+            onChange={(e) => { if (e.target.files?.length) agregarArchivos(e.target.files); e.target.value = '' }} />
         </label>
 
-        {/* Previews */}
         {previews.length > 0 && (
-          <div className="mt-3 space-y-2">
+          <div className="mt-3 grid grid-cols-1 gap-2">
             {previews.map((p, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 px-3 py-2 bg-[#263548] rounded-xl border border-white/10"
-              >
-                {/* Miniatura o ícono */}
-                {p.url ? (
-                  <img
-                    src={p.url}
-                    alt={p.name}
-                    className="w-10 h-10 object-cover rounded-lg flex-shrink-0"
-                  />
-                ) : (
-                  <div className="w-10 h-10 bg-[#1e3a5f] rounded-lg flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-5 h-5 text-brand" />
-                  </div>
-                )}
+              <div key={i} className="flex items-center gap-3 px-3 py-2 bg-[#263548] rounded-xl border border-white/10">
+                {p.previewUrl
+                  ? <img src={p.previewUrl} alt={p.name} className="w-10 h-10 object-cover rounded-lg flex-shrink-0" />
+                  : <div className="w-10 h-10 bg-[#1e3a5f] rounded-lg flex items-center justify-center flex-shrink-0">
+                      <MimeIcon mime={p.mime} className="w-5 h-5 text-brand" />
+                    </div>
+                }
                 <span className="flex-1 text-white text-sm truncate">{p.name}</span>
-                <button
-                  type="button"
-                  onClick={() => quitarArchivo(i)}
+                <button type="button" onClick={() => quitarArchivo(i)}
                   className="text-[#94a3b8] hover:text-red-400 transition-colors !min-h-0 p-1"
-                  aria-label={`Quitar ${p.name}`}
-                >
+                  aria-label={`Quitar ${p.name}`}>
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -513,14 +583,11 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
         )}
       </div>
 
-      {/* Botones */}
       <div className="flex gap-3 pt-2">
-        <button type="button" onClick={onClose} className="btn-secondary flex-1">
-          Cancelar
-        </button>
+        <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancelar</button>
         <button type="submit" disabled={isPending} className="btn-danger flex-1">
           {isPending
-            ? `Reportando${archivos.length > 1 ? ` (${archivos.length} archivos)` : ''}…`
+            ? `Reportando${archivos.length > 0 ? ` (${archivos.length} archivo${archivos.length > 1 ? 's' : ''})` : ''}…`
             : '⚠️ Reportar incidente'}
         </button>
       </div>
@@ -533,9 +600,9 @@ export default function IncidentesPage() {
   const [abrirForm, setAbrirForm]             = useState(false)
   const [filtroEstado, setFiltroEstado]       = useState('')
   const [filtroSeveridad, setFiltroSeveridad] = useState('')
-  const qc   = useQueryClient()
+  const qc      = useQueryClient()
   const { user } = useAuthStore()
-  const isAdmin = ['admin', 'supervisor'].includes(user?.rol)
+  const isAdmin  = ['admin', 'supervisor'].includes(user?.rol)
 
   const { data: incidentes, isLoading } = useQuery({
     queryKey: ['incidentes', filtroEstado, filtroSeveridad],
@@ -556,10 +623,7 @@ export default function IncidentesPage() {
     <div className="max-w-3xl mx-auto space-y-5 animate-slide-up">
 
       <Modal open={abrirForm} onClose={() => setAbrirForm(false)} title="Reportar incidente" size="lg">
-        <NuevoIncidenteForm
-          onClose={() => setAbrirForm(false)}
-          instalaciones={instalaciones}
-        />
+        <NuevoIncidenteForm onClose={() => setAbrirForm(false)} instalaciones={instalaciones} />
       </Modal>
 
       <PageHeader
@@ -568,8 +632,7 @@ export default function IncidentesPage() {
         subtitle="Reportar y gestionar incidentes de seguridad"
         action={
           <button onClick={() => setAbrirForm(true)} className="btn-danger">
-            <Plus className="w-5 h-5" />
-            Reportar
+            <Plus className="w-5 h-5" /> Reportar
           </button>
         }
       />
@@ -577,25 +640,19 @@ export default function IncidentesPage() {
       {/* Filtros */}
       <div className="flex gap-3 flex-wrap items-center">
         <Filter className="w-4 h-4 text-[#94a3b8]" />
-        <select
-          className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroEstado}
-          onChange={(e) => setFiltroEstado(e.target.value)}
-        >
+        <select className="input-field !w-auto !min-h-0 py-2 text-sm"
+          value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
           <option value="">Todos los estados</option>
-          {['reportado', 'investigando', 'resuelto', 'cerrado'].map((e) => (
+          {['reportado','investigando','resuelto','cerrado'].map((e) =>
             <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>
-          ))}
+          )}
         </select>
-        <select
-          className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroSeveridad}
-          onChange={(e) => setFiltroSeveridad(e.target.value)}
-        >
+        <select className="input-field !w-auto !min-h-0 py-2 text-sm"
+          value={filtroSeveridad} onChange={(e) => setFiltroSeveridad(e.target.value)}>
           <option value="">Todas las severidades</option>
-          {SEVERIDADES.map((s) => (
+          {SEVERIDADES.map((s) =>
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-          ))}
+          )}
         </select>
       </div>
 
@@ -609,7 +666,7 @@ export default function IncidentesPage() {
           description="No hay incidentes registrados con los filtros actuales."
           action={
             <button onClick={() => setAbrirForm(true)} className="btn-danger">
-              <Plus className="w-5 h-5" />Reportar incidente
+              <Plus className="w-5 h-5" /> Reportar incidente
             </button>
           }
         />

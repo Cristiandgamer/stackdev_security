@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse as FastAPIFileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime
 import os, shutil, uuid
@@ -506,6 +506,20 @@ def registrar_salida(turno_id: int, db: Session = Depends(get_db), _=Depends(req
 
 # ── Incidentes ─────────────────────────────────────────────────────────────────
 
+
+
+def _get_incidente_completo(db: Session, incidente_id: int) -> Incidente:
+    """Re-consulta el incidente con sus relaciones cargadas para la respuesta."""
+    return (
+        db.query(Incidente)
+        .options(
+            joinedload(Incidente.instalacion),
+            joinedload(Incidente.archivos),
+        )
+        .filter(Incidente.id == incidente_id)
+        .first()
+    )
+
 @router.get("/incidentes", response_model=List[IncidenteOut])
 def listar_incidentes(
     instalacion_id: Optional[int] = None,
@@ -513,7 +527,10 @@ def listar_incidentes(
     db: Session = Depends(get_db),
     _=Depends(require_any)
 ):
-    q = db.query(Incidente)
+    q = db.query(Incidente).options(
+        joinedload(Incidente.instalacion),
+        joinedload(Incidente.archivos),
+    )
     if instalacion_id:
         q = q.filter(Incidente.instalacion_id == instalacion_id)
     if estado:
@@ -544,8 +561,7 @@ def crear_incidente(data: IncidenteCreate, db: Session = Depends(get_db), curren
         db.add(notif)
 
     db.commit()
-    db.refresh(incidente)
-    return incidente
+    return _get_incidente_completo(db, incidente.id)
 
 
 @router.put("/incidentes/{incidente_id}", response_model=IncidenteOut)
@@ -558,8 +574,7 @@ def actualizar_incidente(incidente_id: int, data: IncidenteUpdate, db: Session =
     if data.estado in ("resuelto", "cerrado"):
         incidente.resuelto_en = datetime.utcnow()
     db.commit()
-    db.refresh(incidente)
-    return incidente
+    return _get_incidente_completo(db, incidente.id)
 
 
 @router.post(

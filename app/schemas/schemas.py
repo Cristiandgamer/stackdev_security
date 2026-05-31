@@ -343,7 +343,9 @@ class IncidenteOut(IncidenteBase):
     estado: str
     reportado_en: datetime
     resuelto_en: Optional[datetime] = None
-    # Lista de archivos adjuntos — puede estar vacía si no se han subido archivos
+    # Relación cargada por SQLAlchemy — None si no está disponible
+    instalacion: Optional[InstalacionOut] = None
+    # Lista de archivos adjuntos — vacía si no se han subido archivos
     archivos: List[ArchivoIncidenteOut] = []
 
     model_config = {"from_attributes": True}
