@@ -158,7 +158,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
           <option value="">Seleccionar guardia</option>
           {guardias?.map(g => (
             <option key={g.id} value={g.id}>
-              {g.usuario?.username || `${g.usuario?.nombre || ''} ${g.usuario?.apellido || ''}`.trim() || `Guardia ${g.id}`}
+              {`${g.nombre || ''} ${g.apellido || ''}`.trim() || `Guardia ${g.id}`}
             </option>
           ))}
         </select>
