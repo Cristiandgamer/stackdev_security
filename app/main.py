@@ -56,7 +56,7 @@ def ensure_missing_columns():
 
 def seed_config_asistencia():
     """Crea el registro de configuración de asistencia si no existe."""
-    from app.models.seguridad import ConfigAsistencia
+    from app.models.seguridad_model import ConfigAsistencia
     from app.core.database import SessionLocal
     db = SessionLocal()
     try:
