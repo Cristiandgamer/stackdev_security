@@ -17,8 +17,9 @@ from app.core.security import require_any, require_supervisor, require_admin, ge
 from app.core.config import settings
 from app.models.seguridad import (
     Asistencia, Turno, Guardia, Instalacion,
-    ConfigAsistencia, Notificacion
+    Notificacion
 )
+from app.models.seguridad_model import ConfigAsistencia
 from app.models.usuario import Usuario
 
 logger = logging.getLogger(__name__)
