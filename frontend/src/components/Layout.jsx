@@ -16,7 +16,7 @@ const navItems = [
   { to: "/turnos",       label: "Turnos",         icon: Calendar,        roles: ["admin","supervisor"] },
   { to: "/rondas",       label: "Rondas",         icon: MapPin,          roles: ["admin","supervisor"] },
   { to: "/instalaciones",label: "Instalaciones",  icon: Building2,       roles: ["admin","supervisor"] },
-  { to: "/asistencias",  label: "Asistencias",    icon: ClipboardList,   roles: ["admin","supervisor"] },
+  { to: "/asistencias",  label: "Asistencias",    icon: ClipboardList,   roles: ["admin","supervisor","usuario"] },
   { to: "/usuarios",     label: "Usuarios",       icon: UserCog,         roles: ["admin"] },
 ];
 

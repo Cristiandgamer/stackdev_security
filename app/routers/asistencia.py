@@ -386,7 +386,7 @@ def mi_asistencia_turno_activo(
     ahora = datetime.utcnow()
     turno = db.query(Turno).filter(
         Turno.guardia_id == guardia.id,
-        Turno.estado.in_(["programado", "en_curso"]),
+        Turno.estado.in_(["programado", "asignado", "en_curso", "activo"]),
         Turno.fecha_inicio <= ahora + timedelta(hours=2),
         Turno.fecha_fin >= ahora,
     ).order_by(Turno.fecha_inicio.asc()).first()

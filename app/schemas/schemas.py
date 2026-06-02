@@ -248,7 +248,9 @@ class TurnoBase(BaseModel):
     instalacion_id: int
     fecha_inicio: datetime
     fecha_fin: datetime
+    dias_semana: Optional[List[str]] = None
     notas: Optional[str] = None
+    estado: str = "programado"
 
 
 class TurnoCreate(TurnoBase):
@@ -260,6 +262,7 @@ class TurnoUpdate(BaseModel):
     notas: Optional[str] = None
     fecha_inicio: Optional[datetime] = None
     fecha_fin: Optional[datetime] = None
+    dias_semana: Optional[List[str]] = None
 
 
 class TurnoOut(TurnoBase):

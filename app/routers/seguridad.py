@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse as FastAPIFileResponse
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime
-import os, shutil, uuid
+import os, shutil, uuid, json
 
 from app.core.database import get_db
 from app.core.security import require_any, require_supervisor, require_admin, get_current_user
@@ -328,33 +328,57 @@ def eliminar_guardia(guardia_id: int, db: Session = Depends(get_db), _=Depends(r
 
 # ── Turnos ─────────────────────────────────────────────────────────────────────
 
+def _dia_actual_en_espanol() -> str:
+    dia_map = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+    return dia_map[datetime.utcnow().weekday()]
+
+
+def _turno_valido_para_dia(turno: Turno, dia_actual: str) -> bool:
+    if not getattr(turno, 'dias_semana', None):
+        return True
+    return dia_actual in turno.dias_semana
+
+
+def _buscar_turno_valido(turnos, dia_actual: str):
+    for turno in turnos:
+        if _turno_valido_para_dia(turno, dia_actual):
+            return turno
+    return None
+
+
 @router.get("/turnos/mi-activo", response_model=TurnoDetalleOut)
 def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
     if not guardia:
         raise HTTPException(status_code=404, detail="No se encontró guardia asociado al usuario")
 
+    dia_actual = _dia_actual_en_espanol()
+
     turno = db.query(Turno).filter(
         Turno.guardia_id == guardia.id,
-        Turno.estado == "en_curso"
+        Turno.estado.in_(["en_curso", "activo"])
     ).first()
+    if turno and not _turno_valido_para_dia(turno, dia_actual):
+        turno = None
 
     if not turno:
         ahora = datetime.utcnow()
-        turno = db.query(Turno).filter(
+        turnos = db.query(Turno).filter(
             Turno.guardia_id == guardia.id,
-            Turno.estado == "programado",
+            Turno.estado.in_(["programado", "asignado"]),
             Turno.fecha_inicio <= ahora,
             Turno.fecha_fin >= ahora,
-        ).order_by(Turno.fecha_inicio.asc()).first()
+        ).order_by(Turno.fecha_inicio.asc()).all()
+        turno = _buscar_turno_valido(turnos, dia_actual)
 
     if not turno:
         ahora = datetime.utcnow()
-        turno = db.query(Turno).filter(
+        turnos = db.query(Turno).filter(
             Turno.guardia_id == guardia.id,
-            Turno.estado == "programado",
+            Turno.estado.in_(["programado", "asignado"]),
             Turno.fecha_inicio >= ahora,
-        ).order_by(Turno.fecha_inicio.asc()).first()
+        ).order_by(Turno.fecha_inicio.asc()).all()
+        turno = _buscar_turno_valido(turnos, dia_actual)
 
     if not turno:
         raise HTTPException(status_code=404, detail="No hay turno en curso")

@@ -24,6 +24,7 @@ def ensure_missing_columns():
             ("usuarios",   "username",   "VARCHAR(80)"),
             ("guardias",   "instalacion_id", "INT"),
             ("puntos_control", "ronda_id", "INT"),
+            ("turnos", "dias_semana", "TEXT"),
             # ── nuevas columnas de asistencia ────────────────────────────
             ("asistencias", "latitud_salida",    "DOUBLE"),
             ("asistencias", "longitud_salida",   "DOUBLE"),

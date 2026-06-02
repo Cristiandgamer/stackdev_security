@@ -1,3 +1,4 @@
+import json
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime,
     Float, Text, ForeignKey, Enum
@@ -94,6 +95,26 @@ class Turno(Base):
     instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
     fecha_inicio = Column(DateTime(timezone=True), nullable=False)
     fecha_fin = Column(DateTime(timezone=True), nullable=False)
+    _dias_semana = Column("dias_semana", Text, nullable=True)
+
+    @property
+    def dias_semana(self):
+        if not self._dias_semana:
+            return []
+        try:
+            return json.loads(self._dias_semana)
+        except Exception:
+            return []
+
+    @dias_semana.setter
+    def dias_semana(self, value):
+        if value is None:
+            self._dias_semana = None
+        elif isinstance(value, str):
+            self._dias_semana = value
+        else:
+            self._dias_semana = json.dumps(value)
+
     estado = Column(String(20), default="programado")  # programado|en_curso|finalizado|ausente
     notas = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -20,7 +20,12 @@ const HOURS = Array.from({ length: 12 }, (_, i) => i + 1)
 const MINUTES = ['00', '15', '30', '45']
 
 function dateToIsoDate(value) {
-  return value ? new Date(value).toISOString().slice(0, 10) : ''
+  if (!value) return ''
+  const date = new Date(value)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function timeToString({ hour, minute, ampm }) {
@@ -31,7 +36,9 @@ function timeToString({ hour, minute, ampm }) {
 
 function dateWithTime(date, time) {
   if (!date || !time) return null
-  return new Date(`${date}T${time}`)
+  const [year, month, day] = date.split('-').map(Number)
+  const [hour, minute, second] = time.split(':').map(Number)
+  return new Date(year, month - 1, day, hour, minute, second)
 }
 
 function formatDateLabel(date) {
@@ -143,6 +150,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
       instalacion_id: Number(form.instalacion_id),
       fecha_inicio: startDateTime.toISOString(),
       fecha_fin: endDateTime.toISOString(),
+      dias_semana: form.dias_semana,
       tipo: form.tipo,
       estado: form.estado,
       notas: form.notas,
