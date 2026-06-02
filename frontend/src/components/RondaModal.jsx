@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import mapboxgl from 'mapbox-gl'
 import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
@@ -7,166 +7,309 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 
 export default function RondaModal({ instalacion, onClose, onCreated }) {
   const mapContainer = useRef(null)
-  const mapRef = useRef(null)
-  const [puntos, setPuntos] = useState([])
-  const [area, setArea] = useState(null)
-  const [nombre, setNombre] = useState('')
-  const [descripcion, setDescripcion] = useState('')
+  const mapRef       = useRef(null)
+  // Guardamos los marcadores en un ref para poder eliminarlos al reordenar
+  const markerRefs   = useRef([])   // mapboxgl.Marker[]
 
+  const [puntos,      setPuntos]      = useState([])   // { id, lat, lng }[]
+  const [nombre,      setNombre]      = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const [guardando,   setGuardando]   = useState(false)
+
+  // ── Redibujar TODOS los marcadores cuando cambia la lista ─────────────────
+  const redibujarMarcadores = useCallback((lista, map) => {
+    // Eliminar marcadores anteriores del mapa
+    markerRefs.current.forEach((m) => m.remove())
+    markerRefs.current = []
+
+    lista.forEach((punto, idx) => {
+      const el = document.createElement('div')
+      el.className = [
+        'rounded-full', 'w-9', 'h-9',
+        'flex', 'items-center', 'justify-center',
+        'text-white', 'font-bold', 'text-sm',
+        'border-2', 'border-white', 'shadow-lg',
+        'cursor-pointer',
+      ].join(' ')
+      el.style.backgroundColor = '#f97316'  // brand orange
+      el.innerText = String(idx + 1)        // ← número correcto siempre
+
+      // Tooltip con coordenadas
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([punto.lng, punto.lat])
+        .setPopup(
+          new mapboxgl.Popup({ offset: 20 }).setHTML(
+            `<strong>Punto ${idx + 1}</strong><br/>${punto.lat.toFixed(5)}, ${punto.lng.toFixed(5)}`
+          )
+        )
+        .addTo(map)
+
+      markerRefs.current.push(marker)
+    })
+  }, [])
+
+  // ── Inicializar mapa ──────────────────────────────────────────────────────
   useEffect(() => {
     const token = import.meta.env.VITE_MAPBOX_TOKEN
     if (!token) {
       toast.error('VITE_MAPBOX_TOKEN no configurado. Añade tu token en .env')
       return
     }
+
     mapboxgl.accessToken = token
+
     const map = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: [instalacion.longitud || -71.54, instalacion.latitud || -29.90],
+      center: [
+        instalacion.longitud ?? -71.54,
+        instalacion.latitud  ?? -29.90,
+      ],
       zoom: 15,
     })
     mapRef.current = map
 
-    const nav = new mapboxgl.NavigationControl({ visualizePitch: true })
-    map.addControl(nav, 'top-right')
+    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right')
 
-    // geolocate on load
+    // Centrar en posición real si está disponible
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((p) => {
-        const lng = p.coords.longitude
-        const lat = p.coords.latitude
-        map.setCenter([lng, lat])
+        map.setCenter([p.coords.longitude, p.coords.latitude])
       })
     }
 
-    // click to add marker
+    // Click en el mapa → agregar nuevo punto
     map.on('click', (e) => {
       const { lng, lat } = e.lngLat
-      const id = Date.now()
-      const nuevo = { id, lat, lng }
-      setPuntos(prev => [...prev, nuevo])
-      addMarker(map, nuevo)
+      const nuevo = { id: Date.now(), lat, lng }
+
+      // Usamos la función de actualización del estado para obtener
+      // el valor más reciente de la lista ANTES de hacer setState
+      setPuntos((prev) => {
+        const siguiente = [...prev, nuevo]
+        // Redibujar con la lista ya actualizada
+        redibujarMarcadores(siguiente, map)
+        return siguiente
+      })
     })
 
-    return () => map.remove()
+    return () => {
+      markerRefs.current.forEach((m) => m.remove())
+      markerRefs.current = []
+      map.remove()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const addMarker = (map, punto) => {
-    const el = document.createElement('div')
-    el.className = 'rounded-full bg-brand w-8 h-8 flex items-center justify-center text-white font-bold border-2 border-white'
-    el.style.display = 'flex'
-    el.innerText = (puntos.length + 1).toString()
-    new mapboxgl.Marker(el).setLngLat([punto.lng, punto.lat]).addTo(map)
+  // ── Eliminar punto ────────────────────────────────────────────────────────
+  const removePunto = (id) => {
+    setPuntos((prev) => {
+      const siguiente = prev.filter((p) => p.id !== id)
+      if (mapRef.current) redibujarMarcadores(siguiente, mapRef.current)
+      return siguiente
+    })
   }
 
-  const crearArea = () => {
-    if (!mapRef.current) return
-    const center = mapRef.current.getCenter()
-    const r = 20
-    setArea({ lat: center.lat, lng: center.lng, radio: r })
-    // draw simple circle layer
-    const id = 'ronda-area'
-    const coords = circleCoordinates(center.lng, center.lat, r)
-    if (mapRef.current.getSource(id)) {
-      mapRef.current.getSource(id).setData({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } })
-    } else {
-      mapRef.current.addSource(id, { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] } } })
-      mapRef.current.addLayer({ id, type: 'fill', source: id, paint: { 'fill-color': '#1e90ff', 'fill-opacity': 0.2 } })
-    }
-  }
-
+  // ── Área desde centro del mapa ────────────────────────────────────────────
   const circleCoordinates = (lng, lat, meters, points = 32) => {
     const coords = []
-    const R = 6378137
+    const R = 6_378_137
     for (let i = 0; i < points; i++) {
-      const brng = (i * 360) / points * (Math.PI / 180)
-      const d = meters
-      const latRadians = lat * Math.PI / 180
-      const lngRadians = lng * Math.PI / 180
-      const lat2 = Math.asin(Math.sin(latRadians) * Math.cos(d / R) + Math.cos(latRadians) * Math.sin(d / R) * Math.cos(brng))
-      const lng2 = lngRadians + Math.atan2(Math.sin(brng) * Math.sin(d / R) * Math.cos(latRadians), Math.cos(d / R) - Math.sin(latRadians) * Math.sin(lat2))
+      const brng = (i * 360 / points) * (Math.PI / 180)
+      const lat2 = Math.asin(
+        Math.sin(lat * Math.PI / 180) * Math.cos(meters / R) +
+        Math.cos(lat * Math.PI / 180) * Math.sin(meters / R) * Math.cos(brng)
+      )
+      const lng2 =
+        lng * Math.PI / 180 +
+        Math.atan2(
+          Math.sin(brng) * Math.sin(meters / R) * Math.cos(lat * Math.PI / 180),
+          Math.cos(meters / R) - Math.sin(lat * Math.PI / 180) * Math.sin(lat2)
+        )
       coords.push([lng2 * 180 / Math.PI, lat2 * 180 / Math.PI])
     }
     coords.push(coords[0])
     return coords
   }
 
-  const removePunto = (id) => setPuntos(prev => prev.filter(p => p.id !== id))
-
-  const handleCrear = async () => {
-    if (!nombre.trim()) return toast.error('Nombre de la ronda es requerido')
-    try {
-      const res = await seguridadService.crearRonda({ instalacion_id: instalacion.id, nombre, descripcion })
-      const ronda = res.data
-      // crear puntos asociados
-      for (let i = 0; i < puntos.length; i++) {
-        const p = puntos[i]
-        await seguridadService.crearPunto(instalacion.id, {
-          nombre: `${i+1} - Punto`, descripcion: '', latitud: p.lat, longitud: p.lng, orden: i, ronda_id: ronda.id
-        })
-      }
-      toast.success('Ronda creada')
-      onCreated && onCreated()
-      onClose()
-    } catch (e) {
-      toast.error(e.response?.data?.detail || e.message)
+  const crearArea = () => {
+    if (!mapRef.current) return
+    const { lng, lat } = mapRef.current.getCenter()
+    const r = 20
+    const id = 'ronda-area'
+    const coords = circleCoordinates(lng, lat, r)
+    const geojson = {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [coords] },
+    }
+    if (mapRef.current.getSource(id)) {
+      mapRef.current.getSource(id).setData(geojson)
+    } else {
+      mapRef.current.addSource(id, { type: 'geojson', data: geojson })
+      mapRef.current.addLayer({
+        id,
+        type: 'fill',
+        source: id,
+        paint: { 'fill-color': '#f97316', 'fill-opacity': 0.15 },
+      })
     }
   }
 
+  // ── Crear ronda en el backend ─────────────────────────────────────────────
+  const handleCrear = async () => {
+    if (!nombre.trim()) return toast.error('El nombre de la ronda es requerido')
+    if (puntos.length === 0) return toast.error('Agrega al menos un punto de control')
+
+    setGuardando(true)
+    try {
+      const res   = await seguridadService.crearRonda({
+        instalacion_id: instalacion.id,
+        nombre,
+        descripcion,
+      })
+      const ronda = res.data
+
+      for (let i = 0; i < puntos.length; i++) {
+        const p = puntos[i]
+        await seguridadService.crearPunto(instalacion.id, {
+          nombre:      `Punto ${i + 1}`,
+          descripcion: '',
+          latitud:     p.lat,
+          longitud:    p.lng,
+          orden:       i,
+          ronda_id:    ronda.id,
+        })
+      }
+
+      toast.success(`Ronda "${nombre}" creada con ${puntos.length} punto${puntos.length > 1 ? 's' : ''}`)
+      onCreated?.()
+      onClose()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message)
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-gradient-to-br from-[#1e2d3d] to-[#263548] border border-[#2d5490]/30 rounded-2xl w-full max-w-5xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-        <div className="flex items-center justify-between px-6 py-5 bg-black/20 border-b border-[#2d5490]/20">
-          <h3 className="text-white font-bold text-lg">Crear ronda — {instalacion.nombre}</h3>
+
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 px-6 py-4 bg-black/20 border-b border-[#2d5490]/20">
+          <div>
+            <h3 className="text-white font-bold text-lg">Crear ronda</h3>
+            <p className="text-[#94a3b8] text-sm">{instalacion.nombre} — haz clic en el mapa para agregar puntos</p>
+          </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => { crearArea() }} className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium">
-              Crear área desde centro
+            <button
+              onClick={crearArea}
+              className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium"
+            >
+              Dibujar área central
             </button>
-            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium">
-              Cerrar
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium"
+            >
+              Cancelar
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-4 p-6">
-          <div className="col-span-2 h-[420px] rounded-xl overflow-hidden border border-[#2d5490]/20">
+
+        {/* Body */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 p-5">
+
+          {/* Mapa */}
+          <div className="h-[420px] rounded-xl overflow-hidden border border-[#2d5490]/20">
             <div ref={mapContainer} className="w-full h-full" />
           </div>
-          <div className="col-span-1 space-y-4">
+
+          {/* Panel lateral */}
+          <div className="space-y-4 flex flex-col">
+
+            {/* Nombre */}
             <div>
-              <label className="label">Nombre</label>
-              <input className="input-field" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Nombre de la ronda" />
+              <label className="label">Nombre de la ronda *</label>
+              <input
+                className="input-field"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                placeholder="Ej: Ronda nocturna perimetral"
+              />
             </div>
+
+            {/* Descripción */}
             <div>
               <label className="label">Descripción</label>
-              <textarea className="input-field resize-none" rows={3} value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Descripción de la ronda" />
+              <textarea
+                className="input-field resize-none"
+                rows={2}
+                value={descripcion}
+                onChange={(e) => setDescripcion(e.target.value)}
+                placeholder="Notas adicionales…"
+              />
             </div>
 
-            <div className="border-t border-[#2d5490]/20 pt-4">
-              <h4 className="text-white font-semibold mb-3">Puntos ({puntos.length})</h4>
-              <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
-                {puntos.map((p, idx) => (
-                  <div key={p.id} className="flex items-center justify-between bg-[#2d5490]/20 p-3 rounded-lg border border-[#2d5490]/10 hover:border-[#2d5490]/30 transition-colors">
-                    <div>
-                      <div className="text-white font-medium">Punto {idx+1}</div>
-                      <div className="text-[#94a3b8] text-xs">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</div>
+            {/* Lista de puntos */}
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-white font-semibold text-sm">
+                  Puntos de control
+                </h4>
+                <span className="badge-blue">{puntos.length}</span>
+              </div>
+
+              {puntos.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-sm text-center py-6 border border-dashed border-[#2d5490]/40 rounded-xl">
+                  Haz clic en el mapa<br />para agregar puntos
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto space-y-2 max-h-[220px] pr-1">
+                  {puntos.map((p, idx) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-3 bg-[#0f1929] rounded-xl px-3 py-2.5 border border-[#2d5490]/20"
+                    >
+                      {/* Número */}
+                      <div className="w-7 h-7 rounded-full bg-brand flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                        {idx + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium">Punto {idx + 1}</p>
+                        <p className="text-[#94a3b8] text-xs font-mono truncate">
+                          {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => removePunto(p.id)}
+                        className="text-[#94a3b8] hover:text-red-400 transition-colors !min-h-0 p-1 flex-shrink-0"
+                        aria-label={`Eliminar punto ${idx + 1}`}
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <button onClick={() => removePunto(p.id)} className="text-[#94a3b8] hover:text-red-400 transition-colors text-sm font-medium">
-                      Eliminar
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 p-3 bg-[#2d5490]/10 border border-[#2d5490]/20 rounded-lg">
-                <p className="text-[#94a3b8] text-xs leading-relaxed">
-                  💡 Haz clic en el mapa para agregar puntos. Puedes mover el mapa y usar "Crear área desde centro" para definir la geocerca.
-                </p>
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <button onClick={handleCrear} className="btn-primary w-full mt-4">
-              ✓ Crear ronda
+            {/* Tip */}
+            <p className="text-[#94a3b8] text-xs bg-[#0f1929] rounded-xl p-3 border border-[#2d5490]/20 leading-relaxed">
+              💡 Los puntos se numeran en el orden en que los agregas. Para cambiar el orden, elimina el punto y vuelve a colocarlo.
+            </p>
+
+            {/* Botón crear */}
+            <button
+              onClick={handleCrear}
+              disabled={guardando || puntos.length === 0 || !nombre.trim()}
+              className="btn-primary w-full disabled:opacity-50"
+            >
+              {guardando
+                ? `Creando ronda…`
+                : `✓ Crear ronda${puntos.length > 0 ? ` (${puntos.length} punto${puntos.length > 1 ? 's' : ''})` : ''}`
+              }
             </button>
           </div>
         </div>

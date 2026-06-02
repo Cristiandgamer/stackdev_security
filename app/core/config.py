@@ -9,7 +9,6 @@ def _build_database_url() -> str:
         "MYSQL_URL",
         "mysql+pymysql://stackdev:password@localhost:3306/stackdev_security",
     )
-    # Ensure the pymysql driver is used (Railway provides "mysql://" URLs)
     if mysql_url.startswith("mysql://"):
         mysql_url = mysql_url.replace("mysql://", "mysql+pymysql://", 1)
     return mysql_url
@@ -26,6 +25,12 @@ class Settings(BaseSettings):
 
     # GPS
     CHECKPOINT_RADIO_METROS: int = 50
+
+    # ── Asistencia ─────────────────────────────────────────────────────────
+    # Minutos de gracia antes de marcar como "tardanza"
+    TOLERANCIA_TARDANZA_MIN: int = 10
+    # Minutos desde el inicio del turno para marcar automáticamente como "falta"
+    TOLERANCIA_FALTA_MIN: int = 120
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
