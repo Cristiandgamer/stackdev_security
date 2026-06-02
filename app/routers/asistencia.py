@@ -3,7 +3,7 @@ Router de Asistencia — Stack Dev Security
 Maneja: marcaje entrada/salida, foto/selfie, geofence,
         configuración, dashboard admin, exportación Excel/CSV.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
@@ -299,7 +299,7 @@ async def marcar_salida(
     lat: float,
     lon: float,
     foto: Optional[UploadFile] = File(None),
-    observacion: Optional[str] = None,
+    observacion: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):

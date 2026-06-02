@@ -119,8 +119,9 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
     if (!reconocimientoFacial) return
     import('@vladmandic/face-api').then(async (fa) => {
       try {
+        const modelBase = (import.meta.env.VITE_FACE_API_MODEL_PATH || '/models/face-api').replace(/\/$/, '')
         await Promise.all([
-          fa.nets.tinyFaceDetector.loadFromUri('/node_modules/@vladmandic/face-api/model'),
+          fa.nets.tinyFaceDetector.loadFromUri(modelBase),
         ])
         setFaceApi(fa)
       } catch {

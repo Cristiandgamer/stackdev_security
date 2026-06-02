@@ -146,7 +146,7 @@ function WidgetAsistencia({ navigate }) {
 
 // ── Widget resumen asistencia hoy (solo admin/supervisor) ─────────────────────
 function WidgetAsistenciaAdmin({ navigate }) {
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = new Date().toLocaleDateString('en-CA')
 
   const { data: stats } = useQuery({
     queryKey: ['asistencia-stats-dashboard', hoy],

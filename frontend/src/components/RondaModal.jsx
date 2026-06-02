@@ -134,25 +134,35 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
 
   const crearArea = () => {
     if (!mapRef.current) return
-    const { lng, lat } = mapRef.current.getCenter()
-    const r = 20
-    const id = 'ronda-area'
-    const coords = circleCoordinates(lng, lat, r)
-    const geojson = {
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [coords] },
+
+    const drawArea = () => {
+      const { lng, lat } = mapRef.current.getCenter()
+      const r = 20
+      const id = 'ronda-area'
+      const coords = circleCoordinates(lng, lat, r)
+      const geojson = {
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [coords] },
+      }
+      if (mapRef.current.getSource(id)) {
+        mapRef.current.getSource(id).setData(geojson)
+      } else {
+        mapRef.current.addSource(id, { type: 'geojson', data: geojson })
+        mapRef.current.addLayer({
+          id,
+          type: 'fill',
+          source: id,
+          paint: { 'fill-color': '#f97316', 'fill-opacity': 0.15 },
+        })
+      }
     }
-    if (mapRef.current.getSource(id)) {
-      mapRef.current.getSource(id).setData(geojson)
-    } else {
-      mapRef.current.addSource(id, { type: 'geojson', data: geojson })
-      mapRef.current.addLayer({
-        id,
-        type: 'fill',
-        source: id,
-        paint: { 'fill-color': '#f97316', 'fill-opacity': 0.15 },
-      })
+
+    if (!mapRef.current.style || !mapRef.current.isStyleLoaded()) {
+      mapRef.current.once('load', drawArea)
+      return
     }
+
+    drawArea()
   }
 
   // ── Crear ronda en el backend ─────────────────────────────────────────────

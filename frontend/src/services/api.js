@@ -97,9 +97,12 @@ export const asistenciaService = {
   marcarSalida: (turnoId, lat, lon, foto, observacion) => {
     const fd = new FormData();
     if (foto) fd.append("foto", foto);
-    if (observacion) fd.append("observacion", observacion);
+    let url = `/asistencia/salida?turno_id=${turnoId}&lat=${lat}&lon=${lon}`
+    if (observacion) {
+      url += `&observacion=${encodeURIComponent(observacion)}`
+    }
     return api.post(
-      `/asistencia/salida?turno_id=${turnoId}&lat=${lat}&lon=${lon}`,
+      url,
       fd,
       { headers: { "Content-Type": "multipart/form-data" } }
     );

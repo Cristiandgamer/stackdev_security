@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 import os
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,8 +45,11 @@ def ensure_missing_columns():
             ), {"table": table, "column": column})
             if result.scalar_one() == 0:
                 logger.info(f"Agregando columna faltante: {table}.{column}")
+                ddl_type_sql = ddl_type.strip()
+                if not re.search(r"\bNOT\s+NULL\b|\bNULL\b", ddl_type_sql, re.I):
+                    ddl_type_sql = f"{ddl_type_sql} NULL"
                 conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type} NULL"
+                    f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type_sql}"
                 ))
         conn.commit()
 
