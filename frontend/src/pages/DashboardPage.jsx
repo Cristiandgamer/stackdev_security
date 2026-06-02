@@ -263,7 +263,7 @@ export default function DashboardPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-white">
-            {saludo}, {user?.nombre} 👋
+            {saludo}, {user?.nombre}
           </h1>
           <p className="text-[#94a3b8]">
             {new Date().toLocaleDateString('es-CL', {

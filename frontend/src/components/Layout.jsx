@@ -62,7 +62,7 @@ export default function Layout() {
             <Shield size={20} className="text-white" />
           </div>
           <div>
-            <p className="font-bold text-white text-sm leading-tight">Stack Dev Security</p>
+            <p className="font-bold text-white text-sm leading-tight">Stack Security</p>
             <p className="text-xs" style={{ color: "#475569" }}>Sistema de Guardias</p>
           </div>
         </div>
@@ -92,7 +92,7 @@ export default function Layout() {
                 <div className="w-8 h-8 bg-brand rounded-xl flex items-center justify-center">
                   <Shield size={17} className="text-white" />
                 </div>
-                <span className="font-bold text-white text-sm">Stack Dev Security</span>
+                <span className="font-bold text-white text-sm">Stack Security</span>
               </div>
               <button onClick={() => setOpen(false)} style={{ color: "#94a3b8" }}><X size={20} /></button>
             </div>
@@ -116,7 +116,7 @@ export default function Layout() {
           <button onClick={() => setOpen(true)} style={{ color: "#94a3b8" }}><Menu size={22} /></button>
           <div className="flex items-center gap-2">
             <Shield size={18} className="text-brand" />
-            <span className="font-bold text-white text-sm">Stack Dev Security</span>
+            <span className="font-bold text-white text-sm">Stack Security</span>
           </div>
           <div className="relative">
             <Bell size={20} style={{ color: "#94a3b8" }} />
