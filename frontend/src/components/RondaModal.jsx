@@ -204,24 +204,24 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-gradient-to-br from-[#1e2d3d] to-[#263548] border border-[#2d5490]/30 rounded-2xl w-full max-w-5xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+      <div className="bg-gradient-to-br from-[#1e2d3d] to-[#263548] border border-[#2d5490]/30 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
 
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 bg-black/20 border-b border-[#2d5490]/20">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 bg-black/20 border-b border-[#2d5490]/20 flex-shrink-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-white font-bold text-lg">Crear ronda</h3>
-            <p className="text-[#94a3b8] text-sm">{instalacion.nombre} — haz clic en el mapa para agregar puntos</p>
+            <p className="text-[#94a3b8] text-xs sm:text-sm truncate">{instalacion.nombre} — haz clic en el mapa para agregar puntos</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={crearArea}
-              className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium"
+              className="px-2 sm:px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-xs sm:text-sm font-medium whitespace-nowrap"
             >
-              Dibujar área central
+              Área
             </button>
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-sm font-medium"
+              className="px-2 sm:px-4 py-2 rounded-lg bg-[#2d5490]/20 text-[#94a3b8] hover:bg-[#2d5490]/40 transition-colors text-xs sm:text-sm font-medium whitespace-nowrap"
             >
               Cancelar
             </button>
@@ -229,21 +229,21 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
         </div>
 
         {/* Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 p-5">
+        <div className="flex-1 overflow-hidden flex flex-col lg:grid lg:grid-cols-[1.6fr_1fr] lg:gap-4 p-3 sm:p-5">
 
           {/* Mapa */}
-          <div className="h-[420px] rounded-xl overflow-hidden border border-[#2d5490]/20">
+          <div className="h-[250px] sm:h-[300px] lg:h-auto rounded-xl overflow-hidden border border-[#2d5490]/20 flex-shrink-0 lg:flex-shrink">
             <div ref={mapContainer} className="w-full h-full" />
           </div>
 
           {/* Panel lateral */}
-          <div className="space-y-4 flex flex-col">
+          <div className="space-y-3 sm:space-y-4 flex flex-col min-h-0 mt-3 sm:mt-0 overflow-y-auto lg:overflow-y-visible">
 
             {/* Nombre */}
-            <div>
-              <label className="label">Nombre de la ronda *</label>
+            <div className="flex-shrink-0">
+              <label className="label text-xs sm:text-sm">Nombre de la ronda *</label>
               <input
-                className="input-field"
+                className="input-field text-sm"
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
                 placeholder="Ej: Ronda nocturna perimetral"
@@ -251,10 +251,10 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
             </div>
 
             {/* Descripción */}
-            <div>
-              <label className="label">Descripción</label>
+            <div className="flex-shrink-0">
+              <label className="label text-xs sm:text-sm">Descripción</label>
               <textarea
-                className="input-field resize-none"
+                className="input-field resize-none text-sm"
                 rows={2}
                 value={descripcion}
                 onChange={(e) => setDescripcion(e.target.value)}
@@ -263,31 +263,31 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
             </div>
 
             {/* Lista de puntos */}
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-white font-semibold text-sm">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex items-center justify-between mb-2 flex-shrink-0">
+                <h4 className="text-white font-semibold text-xs sm:text-sm">
                   Puntos de control
                 </h4>
-                <span className="badge-blue">{puntos.length}</span>
+                <span className="badge-blue text-xs">{puntos.length}</span>
               </div>
 
               {puntos.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-sm text-center py-6 border border-dashed border-[#2d5490]/40 rounded-xl">
+                <div className="flex-1 flex items-center justify-center text-[#94a3b8] text-xs sm:text-sm text-center py-4 border border-dashed border-[#2d5490]/40 rounded-xl">
                   Haz clic en el mapa<br />para agregar puntos
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto space-y-2 max-h-[220px] pr-1">
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                   {puntos.map((p, idx) => (
                     <div
                       key={p.id}
                       className="flex items-center gap-3 bg-[#0f1929] rounded-xl px-3 py-2.5 border border-[#2d5490]/20"
                     >
                       {/* Número */}
-                      <div className="w-7 h-7 rounded-full bg-brand flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                      <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-brand flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
                         {idx + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm font-medium">Punto {idx + 1}</p>
+                        <p className="text-white text-xs sm:text-sm font-medium">Punto {idx + 1}</p>
                         <p className="text-[#94a3b8] text-xs font-mono truncate">
                           {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
                         </p>
@@ -306,19 +306,19 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
             </div>
 
             {/* Tip */}
-            <p className="text-[#94a3b8] text-xs bg-[#0f1929] rounded-xl p-3 border border-[#2d5490]/20 leading-relaxed">
-              💡 Los puntos se numeran en el orden en que los agregas. Para cambiar el orden, elimina el punto y vuelve a colocarlo.
+            <p className="text-[#94a3b8] text-xs bg-[#0f1929] rounded-xl p-2 sm:p-3 border border-[#2d5490]/20 leading-relaxed flex-shrink-0">
+              💡 Los puntos se numeran en el orden agregado. Elimina para cambiar orden.
             </p>
 
             {/* Botón crear */}
             <button
               onClick={handleCrear}
               disabled={guardando || puntos.length === 0 || !nombre.trim()}
-              className="btn-primary w-full disabled:opacity-50"
+              className="btn-primary w-full disabled:opacity-50 text-sm sm:text-base flex-shrink-0"
             >
               {guardando
                 ? `Creando ronda…`
-                : `✓ Crear ronda${puntos.length > 0 ? ` (${puntos.length} punto${puntos.length > 1 ? 's' : ''})` : ''}`
+                : `✓ Crear ronda${puntos.length > 0 ? ` (${puntos.length}p)` : ''}`
               }
             </button>
           </div>
