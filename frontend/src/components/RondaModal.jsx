@@ -8,8 +8,8 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 export default function RondaModal({ instalacion, onClose, onCreated }) {
   const mapContainer = useRef(null)
   const mapRef       = useRef(null)
-  // Guardamos los marcadores en un ref para poder eliminarlos al reordenar
-  const markerRefs   = useRef([])   // mapboxgl.Marker[]
+  const markerRefs   = useRef([])   // mapboxgl.Marker[] (puntos de control)
+  const userMarkerRef = useRef(null) // marcador de ubicación del usuario
 
   const [puntos,      setPuntos]      = useState([])   // { id, lat, lng }[]
   const [nombre,      setNombre]      = useState('')
@@ -71,10 +71,32 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
 
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right')
 
-    // Centrar en posición real si está disponible
+    // Mostrar ubicación del usuario con un marcador azul
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition((p) => {
-        map.setCenter([p.coords.longitude, p.coords.latitude])
+        const { latitude, longitude, accuracy } = p.coords
+        
+        // Centrar el mapa en la ubicación del usuario
+        map.setCenter([longitude, latitude])
+        map.zoomTo(16)
+        
+        // Crear marcador personalizado para la ubicación del usuario
+        const userEl = document.createElement('div')
+        userEl.className = 'rounded-full w-5 h-5 border-4 border-blue-400 shadow-lg'
+        userEl.style.backgroundColor = 'rgba(59, 130, 246, 0.3)'
+        userEl.style.cursor = 'default'
+        
+        // Crear y agregar el marcador
+        const userMarker = new mapboxgl.Marker(userEl)
+          .setLngLat([longitude, latitude])
+          .setPopup(
+            new mapboxgl.Popup({ offset: 15 }).setHTML(
+              `<strong>Tu ubicación</strong><br/>${latitude.toFixed(5)}, ${longitude.toFixed(5)}<br/><small>±${Math.round(accuracy)}m</small>`
+            )
+          )
+          .addTo(map)
+        
+        userMarkerRef.current = userMarker
       })
     }
 
@@ -96,6 +118,8 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
     return () => {
       markerRefs.current.forEach((m) => m.remove())
       markerRefs.current = []
+      userMarkerRef.current?.remove()
+      userMarkerRef.current = null
       map.remove()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
