@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield, Eye, EyeOff, Lock, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -10,6 +10,8 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
+  const [blockedUntil, setBlockedUntil] = useState(null)
+  const [remaining, setRemaining] = useState(0)
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
 
@@ -24,6 +26,7 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!validate()) return
+    if (blockedUntil && Date.now() < blockedUntil) return
     setLoading(true)
     try {
       const { data } = await authService.login(form)
@@ -31,13 +34,42 @@ export default function LoginPage() {
       toast.success(`Bienvenido, ${data.user.nombre}`)
       navigate('/')
     } catch (err) {
-      const msg = err.response?.data?.detail || 'Credenciales incorrectas'
-      toast.error(msg)
-      setErrors({ password: msg })
+      const detail = err.response?.data?.detail
+      let msg = 'Credenciales incorrectas'
+      if (typeof detail === 'string') msg = detail
+      else if (detail && typeof detail === 'object') msg = detail.msg || detail || msg
+
+      // If server provided retry_after, set block
+      const retry = detail && detail.retry_after ? Number(detail.retry_after) : null
+      if (retry) {
+        const until = Date.now() + retry * 1000
+        setBlockedUntil(until)
+        setRemaining(Math.ceil(retry))
+        toast.error(msg)
+        setErrors({ password: msg })
+      } else {
+        toast.error(msg)
+        setErrors({ password: msg })
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!blockedUntil) return
+    const iv = setInterval(() => {
+      const secs = Math.ceil((blockedUntil - Date.now()) / 1000)
+      if (secs <= 0) {
+        setBlockedUntil(null)
+        setRemaining(0)
+        clearInterval(iv)
+      } else {
+        setRemaining(secs)
+      }
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [blockedUntil])
 
   return (
     <div className="min-h-[100dvh] flex items-center justify-center bg-[#0f2440] p-4">
@@ -47,11 +79,11 @@ export default function LoginPage() {
       </div>
 
       <div className="relative w-full max-w-md animate-slide-up">
-        <div className="flex flex-col items-center mb-8">
+        <div clasesName="flex flex-col items-center mb-8">
           <div className="w-20 h-20 bg-brand rounded-2xl flex items-center justify-center shadow-2xl shadow-brand/30 mb-4">
             <Shield className="w-11 h-11 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white">Stack Dev</h1>
+          <h1 className="text-3xl font-bold text-white">Stack Security</h1>
           <p className="text-[#94a3b8] text-lg mt-1">Sistema de Seguridad</p>
         </div>
 
@@ -61,6 +93,11 @@ export default function LoginPage() {
           </h2>
 
           <form onSubmit={handleSubmit} noValidate className="space-y-5">
+            {blockedUntil && Date.now() < blockedUntil && (
+              <div className="p-3 rounded-lg bg-red-800/80 text-sm text-white text-center">
+                Demasiados intentos. Intenta nuevamente en {remaining} segundos.
+              </div>
+            )}
             {/* Email */}
             <div>
               <label htmlFor="email" className="label">Correo electrónico</label>
@@ -70,7 +107,7 @@ export default function LoginPage() {
                   id="email"
                   type="email"
                   autoComplete="email"
-                  placeholder="admin@stackdev.cl"
+                  placeholder="nombre@gmail.com"
                   className={`input-field pl-12 ${errors.email ? 'border-red-500' : ''}`}
                   value={form.email}
                   onChange={(e) => {
@@ -113,7 +150,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (blockedUntil && Date.now() < blockedUntil)}
               className="btn-primary w-full text-lg py-4 mt-2"
             >
               {loading ? (
@@ -127,7 +164,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-[#94a3b8] text-sm mt-6">
-          Stack Dev Security © {new Date().getFullYear()}
+          Stack Security © {new Date().getFullYear()}
         </p>
       </div>
     </div>

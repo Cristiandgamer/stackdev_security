@@ -17,6 +17,7 @@ import toast from 'react-hot-toast'
 import { asistenciaService, seguridadService } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { Modal, Spinner, EmptyState } from '../components/index.jsx'
+import { ErrorBoundary } from '../components/ErrorBoundary.jsx'
 
 // ══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -967,6 +968,7 @@ export default function AsistenciasPage() {
     queryKey: ['instalaciones'],
     queryFn: () => seguridadService.listarInstalaciones().then((r) => r.data),
     staleTime: 60_000,
+    retry: false,
   })
 
   const { data: guardias } = useQuery({
@@ -974,27 +976,30 @@ export default function AsistenciasPage() {
     queryFn: () => seguridadService.listarGuardias({ activo: true }).then((r) => r.data),
     staleTime: 60_000,
     enabled: isAdmin,
+    retry: false,
   })
 
   // ── Turno activo del guardia ───────────────────────────────────────────────
-  const { data: turnoActivo, isLoading: loadTurno } = useQuery({
+  const { data: turnoActivo, isLoading: loadTurno, isError: turnoError, error: turnoErrorObj } = useQuery({
     queryKey: ['mi-turno'],
     queryFn: () => seguridadService.miTurnoActivo()
       .then((r) => r.data)
       .catch((err) => err.response?.status === 404 ? null : Promise.reject(err)),
     enabled: !isAdmin,
     refetchInterval: 60_000,
+    retry: false,
   })
 
-  const { data: miAsistencia, refetch: refetchAsistencia } = useQuery({
+  const { data: miAsistencia, refetch: refetchAsistencia, isError: asistenciaError } = useQuery({
     queryKey: ['mi-asistencia'],
     queryFn: () => asistenciaService.miAsistencia().then((r) => r.data),
     enabled: !isAdmin,
     refetchInterval: 30_000,
+    retry: false,
   })
 
   // ── Dashboard live (polling 30s) ───────────────────────────────────────────
-  const { data: liveData, isLoading: loadLive, dataUpdatedAt } = useQuery({
+  const { data: liveData, isLoading: loadLive, dataUpdatedAt, isError: liveError } = useQuery({
     queryKey: ['asistencia-live', fechaLive, instalacionLive],
     queryFn: () => asistenciaService.dashboardLive({
       fecha: fechaLive,
@@ -1003,6 +1008,7 @@ export default function AsistenciasPage() {
     enabled: isAdmin && tabAdmin === 'live',
     refetchInterval: 30_000,
     staleTime: 25_000,
+    retry: false,
   })
 
   // ── Estadísticas para live ─────────────────────────────────────────────────
@@ -1014,13 +1020,15 @@ export default function AsistenciasPage() {
     }).then((r) => r.data),
     enabled: isAdmin && tabAdmin === 'live',
     refetchInterval: 30_000,
+    retry: false,
   })
 
   // ── Config ─────────────────────────────────────────────────────────────────
-  const { data: config, refetch: refetchConfig } = useQuery({
+  const { data: config, refetch: refetchConfig, isError: configError } = useQuery({
     queryKey: ['asistencia-config'],
     queryFn: () => asistenciaService.obtenerConfig().then((r) => r.data),
     staleTime: 60_000,
+    retry: false,
   })
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1028,39 +1036,43 @@ export default function AsistenciasPage() {
   // ══════════════════════════════════════════════════════════════════════════
   if (!isAdmin) {
     return (
-      <div className="max-w-lg mx-auto space-y-5 animate-slide-up">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand/20 rounded-xl flex items-center justify-center">
-            <ClipboardList className="w-5 h-5 text-brand" />
+      <ErrorBoundary>
+        <div className="max-w-lg mx-auto space-y-5 animate-slide-up">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-brand/20 rounded-xl flex items-center justify-center">
+              <ClipboardList className="w-5 h-5 text-brand" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Asistencia</h1>
+              <p className="text-[#94a3b8] text-sm">Marque su entrada y salida del turno</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white">Asistencia</h1>
-            <p className="text-[#94a3b8] text-sm">Marque su entrada y salida del turno</p>
-          </div>
+
+          {turnoError ? (
+            <EmptyState icon={Clock} title="Error al obtener turno" description={turnoErrorObj?.message || 'Intenta recargar la página.'} />
+          ) : loadTurno ? (
+            <Spinner />
+          ) : !turnoActivo ? (
+            <EmptyState
+              icon={Clock}
+              title="Sin turno activo"
+              description="No tienes un turno asignado para marcar asistencia en este momento."
+            />
+          ) : (
+            <PanelMarcaje
+              turno={turnoActivo}
+              asistencia={miAsistencia}
+              onMarcado={() => {
+                refetchAsistencia()
+                qc.invalidateQueries({ queryKey: ['mi-turno'] })
+              }}
+            />
+          )}
+
+          {/* Historial reciente */}
+          <HistorialGuardia />
         </div>
-
-        {loadTurno ? (
-          <Spinner />
-        ) : !turnoActivo ? (
-          <EmptyState
-            icon={Clock}
-            title="Sin turno activo"
-            description="No tienes un turno asignado para marcar asistencia en este momento."
-          />
-        ) : (
-          <PanelMarcaje
-            turno={turnoActivo}
-            asistencia={miAsistencia}
-            onMarcado={() => {
-              refetchAsistencia()
-              qc.invalidateQueries({ queryKey: ['mi-turno'] })
-            }}
-          />
-        )}
-
-        {/* Historial reciente */}
-        <HistorialGuardia />
-      </div>
+      </ErrorBoundary>
     )
   }
 
@@ -1075,7 +1087,8 @@ export default function AsistenciasPage() {
   ]
 
   return (
-    <div className="max-w-5xl mx-auto space-y-5 animate-slide-up">
+    <ErrorBoundary>
+      <div className="max-w-5xl mx-auto space-y-5 animate-slide-up">
 
       {/* Modal ajuste manual */}
       <Modal
@@ -1232,6 +1245,7 @@ export default function AsistenciasPage() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   )
 }
 

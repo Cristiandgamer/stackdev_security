@@ -1,7 +1,7 @@
 import os
 from pydantic import Field
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 
 def _build_database_url() -> str:
@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = Field(default_factory=_build_database_url)
+    # Redis (opcional). Ej: redis://:password@host:6379/0
+    REDIS_URL: Optional[str] = None
 
     # GPS
     CHECKPOINT_RADIO_METROS: int = 50

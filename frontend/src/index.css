@@ -121,3 +121,17 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 }
+
+/* Mobile tweaks */
+@media (max-width: 640px) {
+  .btn-primary, .btn-secondary, .btn-ghost {
+    @apply w-full px-4 py-3 text-base;
+    min-height: 52px;
+  }
+  .input-field {
+    @apply text-base px-4 py-3;
+    min-height: 48px;
+  }
+  .card { @apply rounded-xl; }
+  .page-padding-mobile { padding-left: 12px; padding-right: 12px; }
+}
