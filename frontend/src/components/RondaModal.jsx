@@ -229,15 +229,15 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-hidden flex flex-col lg:grid lg:grid-cols-[1.6fr_1fr] lg:gap-4 p-3 sm:p-5">
+        <div className="flex-1 overflow-hidden flex flex-col p-3 sm:p-5 gap-3 sm:gap-4 lg:gap-4 lg:grid lg:grid-cols-[1.6fr_1fr]">
 
           {/* Mapa */}
-          <div className="h-[250px] sm:h-[300px] lg:h-auto rounded-xl overflow-hidden border border-[#2d5490]/20 flex-shrink-0 lg:flex-shrink">
+          <div className="h-[250px] sm:h-[300px] lg:h-full rounded-xl overflow-hidden border border-[#2d5490]/20">
             <div ref={mapContainer} className="w-full h-full" />
           </div>
 
           {/* Panel lateral */}
-          <div className="space-y-3 sm:space-y-4 flex flex-col min-h-0 mt-3 sm:mt-0 overflow-y-auto lg:overflow-y-visible">
+          <div className="space-y-3 sm:space-y-4 flex flex-col min-h-0 overflow-y-auto">
 
             {/* Nombre */}
             <div className="flex-shrink-0">
