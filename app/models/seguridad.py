@@ -1,7 +1,7 @@
 import json
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime,
-    Float, Text, ForeignKey, Enum
+    Float, Text, ForeignKey, Enum, Index
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -29,8 +29,8 @@ class PuntoControl(Base):
     __tablename__ = "puntos_control"
 
     id = Column(Integer, primary_key=True, index=True)
-    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
-    ronda_id = Column(Integer, ForeignKey("rondas.id"), nullable=True)
+    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False, index=True)
+    ronda_id = Column(Integer, ForeignKey("rondas.id"), nullable=True, index=True)
     nombre = Column(String(150), nullable=False)
     descripcion = Column(Text)
     latitud = Column(Float, nullable=False)
@@ -48,11 +48,14 @@ class PuntoControl(Base):
 
 class VerificacionPunto(Base):
     __tablename__ = "verificaciones_punto"
+    __table_args__ = (
+        Index("ix_verificaciones_turno_guardia", "turno_id", "guardia_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    punto_control_id = Column(Integer, ForeignKey("puntos_control.id"), nullable=False)
-    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False)
-    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False)
+    punto_control_id = Column(Integer, ForeignKey("puntos_control.id"), nullable=False, index=True)
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
+    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
     metodo = Column(String(10))  # gps | qr | ambos
     latitud_verificada = Column(Float)
     longitud_verificada = Column(Float)
@@ -70,8 +73,8 @@ class Guardia(Base):
     __tablename__ = "guardias"
 
     id = Column(Integer, primary_key=True, index=True)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
-    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True, index=True)
+    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=True, index=True)
     rut = Column(String(15), unique=True, index=True, nullable=False)
     nombre = Column(String(100), nullable=False)
     apellido = Column(String(100), nullable=False)
@@ -89,12 +92,16 @@ class Guardia(Base):
 
 class Turno(Base):
     __tablename__ = "turnos"
+    __table_args__ = (
+        Index("ix_turnos_guardia_fecha_inicio", "guardia_id", "fecha_inicio"),
+        Index("ix_turnos_instalacion_fecha_inicio", "instalacion_id", "fecha_inicio"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False)
-    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
-    fecha_inicio = Column(DateTime(timezone=True), nullable=False)
-    fecha_fin = Column(DateTime(timezone=True), nullable=False)
+    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
+    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False, index=True)
+    fecha_inicio = Column(DateTime(timezone=True), nullable=False, index=True)
+    fecha_fin = Column(DateTime(timezone=True), nullable=False, index=True)
     _dias_semana = Column("dias_semana", Text, nullable=True)
 
     @property
@@ -126,10 +133,13 @@ class Turno(Base):
 
 class Asistencia(Base):
     __tablename__ = "asistencias"
+    __table_args__ = (
+        Index("ix_asistencias_guardia_created_at", "guardia_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False)
-    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False)
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
+    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
     entrada = Column(DateTime(timezone=True))
     salida = Column(DateTime(timezone=True))
     latitud_entrada = Column(Float)
@@ -145,9 +155,9 @@ class Incidente(Base):
     __tablename__ = "incidentes"
 
     id = Column(Integer, primary_key=True, index=True)
-    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
-    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=True)
-    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=True)
+    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False, index=True)
+    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=True, index=True)
     titulo = Column(String(200), nullable=False)
     descripcion = Column(Text)
     severidad = Column(String(10), default="media")  # baja|media|alta|critica
@@ -177,9 +187,13 @@ class ArchivoIncidente(Base):
 
 class Notificacion(Base):
     __tablename__ = "notificaciones"
+    __table_args__ = (
+        Index("ix_notificaciones_usuario_fecha", "usuario_id", "created_at"),
+        Index("ix_notificaciones_created_at", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
     titulo = Column(String(200), nullable=False)
     mensaje = Column(Text)
     leida = Column(Boolean, default=False)

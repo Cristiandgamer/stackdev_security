@@ -79,7 +79,7 @@ export default function LoginPage() {
       </div>
 
       <div className="relative w-full max-w-md animate-slide-up">
-        <div clasesName="flex flex-col items-center mb-8">
+        <div className="flex flex-col items-center mb-8 text-center">
           <div className="w-20 h-20 bg-brand rounded-2xl flex items-center justify-center shadow-2xl shadow-brand/30 mb-4">
             <Shield className="w-11 h-11 text-white" />
           </div>
@@ -108,7 +108,7 @@ export default function LoginPage() {
                   type="email"
                   autoComplete="email"
                   placeholder="nombre@gmail.com"
-                  className={`input-field pl-12 ${errors.email ? 'border-red-500' : ''}`}
+                  className={`input-field pl-14 ${errors.email ? 'border-red-500' : ''}`}
                   value={form.email}
                   onChange={(e) => {
                     setForm(f => ({ ...f, email: e.target.value }))
@@ -129,7 +129,7 @@ export default function LoginPage() {
                   type={showPass ? 'text' : 'password'}
                   autoComplete="current-password"
                   placeholder="••••••••"
-                  className={`input-field pl-12 pr-12 ${errors.password ? 'border-red-500' : ''}`}
+                  className={`input-field pl-14 pr-12 ${errors.password ? 'border-red-500' : ''}`}
                   value={form.password}
                   onChange={(e) => {
                     setForm(f => ({ ...f, password: e.target.value }))

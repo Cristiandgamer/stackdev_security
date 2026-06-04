@@ -36,6 +36,13 @@ EXTENSIONES_PERMITIDAS = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif",
     ".pdf", ".doc", ".docx", ".txt",
 }
+MIME_PERMITIDOS = {
+    "image/jpeg", "image/png", "image/webp", "image/gif",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+}
 MAX_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
 
 
@@ -48,6 +55,18 @@ def _validar_archivo(archivo: UploadFile) -> None:
             f"Permitidos: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}"
         )
 
+    if archivo.content_type and archivo.content_type not in MIME_PERMITIDOS:
+        raise HTTPException(400, f"Tipo MIME no permitido ({archivo.content_type}).")
+
+    try:
+        archivo.file.seek(0, os.SEEK_END)
+        size = archivo.file.tell()
+        archivo.file.seek(0)
+    except Exception:
+        size = 0
+    if size > MAX_BYTES:
+        raise HTTPException(413, f"Archivo demasiado grande. Tamaño máximo: {settings.MAX_UPLOAD_MB} MB")
+
 
 def _guardar_archivo(archivo: UploadFile) -> tuple[str, str]:
     """Guarda el archivo en disco y retorna (nombre_unico, ruta_relativa)."""
@@ -55,6 +74,7 @@ def _guardar_archivo(archivo: UploadFile) -> tuple[str, str]:
     nombre_unico = f"{uuid.uuid4()}{ext}"
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     ruta_fisica = os.path.join(settings.UPLOAD_DIR, nombre_unico)
+    archivo.file.seek(0)
     with open(ruta_fisica, "wb") as f:
         shutil.copyfileobj(archivo.file, f)
     return nombre_unico, f"/uploads/{nombre_unico}"

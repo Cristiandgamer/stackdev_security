@@ -6,6 +6,10 @@ from app.core.security import verify_password, create_access_token, get_current_
 from app.models.usuario import Usuario
 from app.schemas.schemas import Token, LoginRequest
 from app.core.config import settings
+import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Optional Redis client (fallback to in-memory if not configured)
 redis_client = None
@@ -53,6 +57,8 @@ def login(form: LoginRequest, request: Request, db: Session = Depends(get_db)):
         ).first()
 
         if not user or not verify_password(form.password, user.hashed_password):
+            identifier = hashlib.sha256(form.email.lower().strip().encode()).hexdigest()[:8]
+            logger.warning("Login fallido para %s desde %s", identifier, client_ip)
             attempts = redis_client.incr(attempts_key)
             if attempts == 1:
                 redis_client.expire(attempts_key, LOCK_SECONDS)
@@ -85,7 +91,8 @@ def login(form: LoginRequest, request: Request, db: Session = Depends(get_db)):
         ).first()
 
         if not user or not verify_password(form.password, user.hashed_password):
-            # increment attempts
+            identifier = hashlib.sha256(form.email.lower().strip().encode()).hexdigest()[:8]
+            logger.warning("Login fallido para %s desde %s", identifier, client_ip)
             record["count"] = record.get("count", 0) + 1
             if record["count"] >= MAX_ATTEMPTS:
                 record["lock_until"] = now + timedelta(seconds=LOCK_SECONDS)

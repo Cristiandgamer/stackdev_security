@@ -243,15 +243,16 @@ export default function DashboardPage() {
       .catch((err) => err.response?.status === 404 ? null : Promise.reject(err)),
   })
 
-  const { data: notifData } = useQuery({
+  const { data: notifData = [] } = useQuery({
     queryKey: ['notificaciones'],
-    queryFn: () => seguridadService.listarNotificaciones({ solo_no_leidas: true }),
-    select: r => r.data,
+    queryFn: () => seguridadService.listarNotificaciones({ solo_no_leidas: true })
+      .then((r) => r.data),
     refetchInterval: 30_000,
   })
 
   const hora = new Date().getHours()
   const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches'
+  const notifUnreadCount = notifData?.length ?? 0
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 animate-slide-up">
@@ -314,7 +315,7 @@ export default function DashboardPage() {
       ))}
 
       {/* Notificaciones sin leer */}
-      {notifData?.no_leidas > 0 && (
+      {notifUnreadCount > 0 && (
         <div className="card p-5 border-l-4 border-l-brand">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -323,12 +324,12 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="text-white font-semibold">
-                  {notifData.no_leidas} notificación{notifData.no_leidas > 1 ? 'es' : ''} sin leer
+                  {notifUnreadCount} notificación{notifUnreadCount > 1 ? 'es' : ''} sin leer
                 </p>
-                <p className="text-[#94a3b8] text-sm">{notifData.items?.[0]?.titulo}</p>
+                <p className="text-[#94a3b8] text-sm">{notifData?.[0]?.titulo}</p>
               </div>
             </div>
-            <button onClick={() => navigate('/incidentes')} className="btn-ghost text-brand">
+            <button className="btn-ghost text-brand" disabled>
               Ver <ChevronRight className="w-4 h-4" />
             </button>
           </div>

@@ -36,6 +36,12 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    ALLOW_CREDENTIALS: bool = False
+    ALLOWED_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    ALLOWED_HEADERS: List[str] = ["Authorization", "Content-Type"]
+
+    # Trusted hosts for request validation
+    TRUSTED_HOSTS: List[str] = ["localhost", "127.0.0.1"]
 
     # Uploads
     UPLOAD_DIR: str = "uploads"

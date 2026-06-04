@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
@@ -105,12 +107,34 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+if settings.TRUSTED_HOSTS:
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.TRUSTED_HOSTS,
+    )
+    app.add_middleware(
+        ProxyHeadersMiddleware,
+        trusted_hosts=settings.TRUSTED_HOSTS,
+    )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=settings.ALLOW_CREDENTIALS,
+    allow_methods=settings.ALLOWED_METHODS,
+    allow_headers=settings.ALLOWED_HEADERS,
 )
 
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])

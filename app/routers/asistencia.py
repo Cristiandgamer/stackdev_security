@@ -5,6 +5,7 @@ Maneja: marcaje entrada/salida, foto/selfie, geofence,
 """
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
 from typing import List, Optional
@@ -70,8 +71,32 @@ def _calcular_estado(
     return "tardanza", retraso
 
 
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_UPLOAD_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _validar_foto(archivo: UploadFile) -> None:
+    ext = os.path.splitext(archivo.filename or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(400, "Formato de imagen no permitido. Solo JPG, PNG, WEBP y GIF.")
+
+    if archivo.content_type and archivo.content_type not in ALLOWED_IMAGE_MIME_TYPES:
+        raise HTTPException(400, f"Tipo MIME de imagen no permitido ({archivo.content_type}).")
+
+    try:
+        archivo.file.seek(0, os.SEEK_END)
+        size = archivo.file.tell()
+        archivo.file.seek(0)
+    except Exception:
+        size = 0
+    if size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Imagen demasiado grande. Tamaño máximo: {settings.MAX_UPLOAD_MB} MB")
+
+
 def _guardar_foto(archivo: UploadFile, prefijo: str = "selfie") -> str:
     """Guarda la foto en /uploads y retorna la ruta relativa."""
+    _validar_foto(archivo)
     ext = os.path.splitext(archivo.filename or "foto.jpg")[1].lower() or ".jpg"
     nombre = f"{prefijo}_{uuid.uuid4()}{ext}"
     ruta_fisica = os.path.join(settings.UPLOAD_DIR, nombre)
@@ -380,22 +405,23 @@ def mi_asistencia_turno_activo(
     current_user=Depends(get_current_user),
 ):
     """Retorna la asistencia del turno activo del guardia conectado, o null."""
-    guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
-    if not guardia:
-        return None
     ahora = datetime.utcnow()
-    turno = db.query(Turno).filter(
-        Turno.guardia_id == guardia.id,
-        Turno.estado.in_(["programado", "asignado", "en_curso", "activo"]),
-        Turno.fecha_inicio <= ahora + timedelta(hours=2),
-        Turno.fecha_fin >= ahora,
-    ).order_by(Turno.fecha_inicio.asc()).first()
+    turno = (
+        db.query(Turno)
+          .join(Guardia, Guardia.id == Turno.guardia_id)
+          .options(joinedload(Turno.asistencia))
+          .filter(
+              Guardia.usuario_id == current_user.id,
+              Turno.estado.in_(["programado", "asignado", "en_curso", "activo"]),
+              Turno.fecha_inicio <= ahora + timedelta(hours=2),
+              Turno.fecha_fin >= ahora,
+          )
+          .order_by(Turno.fecha_inicio.asc())
+          .first()
+    )
     if not turno:
         return None
-    return db.query(Asistencia).filter(
-        Asistencia.turno_id == turno.id,
-        Asistencia.guardia_id == guardia.id,
-    ).first()
+    return turno.asistencia
 
 
 @router.get("/mi-historial", response_model=List[AsistenciaOut])
@@ -497,36 +523,33 @@ def estadisticas(
     except ValueError:
         raise HTTPException(400, "Formato de fecha inválido. Use YYYY-MM-DD")
 
-    q = (
-        db.query(Turno)
-        .options(joinedload(Turno.asistencia))
-        .filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio <= ff)
-    )
+    q = db.query(
+        func.count(Turno.id),
+        func.sum(case((Asistencia.estado == "a_tiempo", 1), else_=0)),
+        func.sum(case((Asistencia.estado == "tardanza", 1), else_=0)),
+        func.sum(case((Asistencia.estado == "falta", 1), else_=0)),
+        func.sum(case((Asistencia.id == None, 1), else_=0)),
+        func.sum(func.coalesce(Asistencia.minutos_retraso, 0)),
+        func.sum(func.coalesce(Asistencia.minutos_trabajados, 0)),
+        func.sum(func.coalesce(Asistencia.horas_extra, 0) * 60),
+    ).outerjoin(Asistencia).filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio <= ff)
+
     if guardia_id:
         q = q.filter(Turno.guardia_id == guardia_id)
     if instalacion_id:
         q = q.filter(Turno.instalacion_id == instalacion_id)
 
-    turnos = q.all()
-    total  = len(turnos)
+    result = q.one()
+    total = int(result[0] or 0)
+    a_tiempo = int(result[1] or 0)
+    tardanza = int(result[2] or 0)
+    falta = int(result[3] or 0)
+    sin_marcar = int(result[4] or 0)
+    total_min_retraso = int(result[5] or 0)
+    total_min_trabajados = int(result[6] or 0)
+    total_min_extra = int(result[7] or 0)
 
-    conteo = {"a_tiempo": 0, "tardanza": 0, "falta": 0, "sin_marcar": 0}
-    total_min_retraso   = 0
-    total_min_trabajados = 0
-    total_min_extra     = 0
-
-    for t in turnos:
-        a = t.asistencia
-        est = a.estado if a else "sin_marcar"
-        conteo[est] = conteo.get(est, 0) + 1
-        if a:
-            total_min_retraso   += a.minutos_retraso or 0
-            total_min_trabajados += a.minutos_trabajados or 0
-            total_min_extra     += int((a.horas_extra or 0) * 60)
-
-    puntualidad = (
-        round((conteo["a_tiempo"] / total) * 100, 1) if total > 0 else 0.0
-    )
+    puntualidad = round((a_tiempo / total) * 100, 1) if total > 0 else 0.0
     promedio_retraso = round(total_min_retraso / total, 1) if total > 0 else 0.0
 
     return EstadisticasAsistenciaOut(
