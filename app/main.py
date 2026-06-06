@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 import os
@@ -100,25 +100,17 @@ app = FastAPI(
     title="Stack Dev Security API",
     version="2.0.0",
     lifespan=lifespan,
-    # Docs solo en desarrollo — nunca exponer en producción
     docs_url="/api/docs" if os.getenv("ENVIRONMENT") != "production" else None,
     redoc_url=None,
     openapi_url="/api/openapi.json" if os.getenv("ENVIRONMENT") != "production" else None,
 )
 
 # ── 1. ProxyHeadersMiddleware ─────────────────────────────────────────────────
-# Railway termina TLS en su propio proxy. Este middleware restaura la IP real
-# y el protocolo (https) desde los headers X-Forwarded-For / X-Forwarded-Proto.
-# trusted_hosts="*" es seguro aquí porque Railway ya filtra el tráfico externo
-# a nivel de infraestructura antes de llegar a nuestro contenedor.
+# Railway termina TLS en su proxy; esto restaura IP real y proto https.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# ── 2. TrustedHostMiddleware (OWASP A05 — Security Misconfiguration) ──────────
-# Protege contra Host Header Injection. Se configura con el dominio real
-# desde la variable de entorno TRUSTED_HOSTS en Railway.
-# Valor recomendado en Railway:
-#   TRUSTED_HOSTS=["stackdevsecurity-production.up.railway.app","localhost"]
-# Si no está configurado, se permiten todos los hosts (menos seguro pero funcional).
+# ── 2. TrustedHostMiddleware (OWASP A05) ──────────────────────────────────────
+# Configura en Railway: TRUSTED_HOSTS=["stackdevsecurity-production.up.railway.app","localhost"]
 _trusted_hosts = getattr(settings, "TRUSTED_HOSTS", [])
 if _trusted_hosts:
     app.add_middleware(
@@ -128,25 +120,20 @@ if _trusted_hosts:
 else:
     logger.warning(
         "⚠ TRUSTED_HOSTS no configurado — TrustedHostMiddleware desactivado. "
-        "Configura TRUSTED_HOSTS en Railway para mayor seguridad."
+        "Agrega TRUSTED_HOSTS en Railway para protección contra Host Header Injection."
     )
 
 # ── 3. Security Headers (OWASP A05) ──────────────────────────────────────────
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    # Evita que el navegador adivine el MIME type (OWASP A05)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    # Protege contra clickjacking (OWASP A04)
     response.headers.setdefault("X-Frame-Options", "DENY")
-    # Controla información enviada en Referer
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    # Restringe acceso a hardware sensible (OWASP A05)
     response.headers.setdefault(
         "Permissions-Policy",
-        "geolocation=(self), microphone=(), camera=(self)"
+        "geolocation=(self), microphone=(), camera=(self)",
     )
-    # HSTS solo en HTTPS (OWASP A02)
     forwarded_proto = (
         request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
     )
@@ -158,8 +145,6 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 # ── 4. CORS (OWASP A05) ───────────────────────────────────────────────────────
-# allow_credentials=False porque usamos JWT en header Authorization,
-# no en cookies. Esto evita ataques CSRF.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -179,7 +164,7 @@ app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistenci
 def health():
     return {"status": "ok", "app": "Stack Dev Security"}
 
-# ── Archivos subidos ──────────────────────────────────────────────────────────
+# ── Archivos subidos por usuarios ─────────────────────────────────────────────
 if os.path.exists(settings.UPLOAD_DIR):
     app.mount(
         "/uploads",
@@ -188,41 +173,43 @@ if os.path.exists(settings.UPLOAD_DIR):
     )
 
 # ── Frontend SPA ──────────────────────────────────────────────────────────────
-# El Dockerfile copia el dist en /app/frontend/dist
-# __file__ = /app/app/main.py → dirname = /app/app → join frontend/dist = /app/app/frontend/dist
-# PERO el Dockerfile hace: COPY --from=frontend-builder /frontend/dist ./frontend/dist
-# lo que deja el dist en /app/frontend/dist (relativo al WORKDIR /app)
+# Dockerfile: WORKDIR /app → COPY --from=frontend-builder /frontend/dist ./frontend/dist
+# Resultado en contenedor: /app/frontend/dist
+# __file__ = /app/app/main.py → dirname(__file__) = /app/app
+# dirname(dirname(__file__)) = /app  →  /app/frontend/dist  ✓
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "frontend", "dist"
+    "frontend", "dist",
 )
 
 if os.path.exists(FRONTEND_DIST):
-    logger.info(f"✓ Sirviendo frontend desde {FRONTEND_DIST}")
+    logger.info(f"✓ Frontend encontrado en {FRONTEND_DIST}")
 
+    # /assets/** — JS, CSS y otros chunks generados por Vite
     assets_dir = os.path.join(FRONTEND_DIST, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    @app.get("/favicon.svg")
-    def favicon():
-        return FileResponse(os.path.join(FRONTEND_DIST, "favicon.svg"))
-
-    @app.get("/manifest.json")
-    def manifest():
-        return FileResponse(
-            os.path.join(FRONTEND_DIST, "manifest.json"),
-            media_type="application/json",
-        )
-
-    # SPA fallback — todas las rutas del router de React devuelven index.html
+    # SPA fallback — debe ir AL FINAL para no interceptar rutas de API
+    # Cualquier archivo que exista en dist se sirve directamente (favicon, manifest, etc.)
+    # Si no existe → index.html (React Router maneja la ruta)
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
+        # Nunca interceptar rutas de API ni uploads con el fallback SPA
         if full_path.startswith(("api/", "uploads/")):
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404)
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+        # Si el archivo existe en el dist, servirlo directamente
+        # (favicon.svg, manifest.json, robots.txt, etc.)
+        file_path = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(file_path):
+            return FileResponse(file_path)
+
+        # Todo lo demás → index.html para que React Router maneje la ruta
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+
 else:
     logger.warning(
-        f"⚠ Frontend dist no encontrado en {FRONTEND_DIST} — modo API only"
+        f"⚠ Frontend dist no encontrado en {FRONTEND_DIST} — modo API only. "
+        "Verifica que el Dockerfile ejecute el build del frontend correctamente."
     )
