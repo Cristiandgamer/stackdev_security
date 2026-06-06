@@ -2,13 +2,18 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "/api" });
 
+// ── Lee el token desde localStorage (con fallback a sessionStorage)
 const readAuthToken = () => {
   try {
-    const raw = sessionStorage.getItem("stackdev-auth");
-    const auth = raw ? JSON.parse(raw) : {};
-    return auth?.state?.token || auth?.token || auth?.access_token || auth?.state?.access_token || null;
-  } catch (error) {
-    sessionStorage.removeItem("stackdev-auth");
+    // Intentar localStorage primero (nueva versión)
+    let raw = localStorage.getItem("stackdev-auth");
+    // Fallback a sessionStorage (versión anterior)
+    if (!raw) raw = sessionStorage.getItem("stackdev-auth");
+    if (!raw) return null;
+    const auth = JSON.parse(raw);
+    // Zustand persist guarda en { state: { token, user } }
+    return auth?.state?.token ?? auth?.token ?? auth?.access_token ?? null;
+  } catch {
     return null;
   }
 };
@@ -23,7 +28,13 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      sessionStorage.removeItem("stackdev-auth");
+      // Limpiar ambos storages al expirar sesión
+      try {
+        localStorage.removeItem("stackdev-auth");
+        sessionStorage.removeItem("stackdev-auth");
+      } catch {
+        // ignorar
+      }
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -84,11 +95,9 @@ export const seguridadService = {
 
 // ── asistenciaService ─────────────────────────────────────────────────────────
 export const asistenciaService = {
-  // Configuración (admin)
   obtenerConfig: () => api.get("/asistencia/config"),
   actualizarConfig: (d) => api.put("/asistencia/config", d),
 
-  // Marcaje guardia
   marcarEntrada: (turnoId, lat, lon, foto) => {
     const fd = new FormData();
     if (foto) fd.append("foto", foto);
@@ -101,36 +110,22 @@ export const asistenciaService = {
   marcarSalida: (turnoId, lat, lon, foto, observacion) => {
     const fd = new FormData();
     if (foto) fd.append("foto", foto);
-    let url = `/asistencia/salida?turno_id=${turnoId}&lat=${lat}&lon=${lon}`
-    if (observacion) {
-      url += `&observacion=${encodeURIComponent(observacion)}`
-    }
-    return api.post(
-      url,
-      fd,
-      { headers: { "Content-Type": "multipart/form-data" } }
-    );
+    let url = `/asistencia/salida?turno_id=${turnoId}&lat=${lat}&lon=${lon}`;
+    if (observacion) url += `&observacion=${encodeURIComponent(observacion)}`;
+    return api.post(url, fd, { headers: { "Content-Type": "multipart/form-data" } });
   },
 
-  // Guardia — consultas
   miAsistencia: () => api.get("/asistencia/mi-asistencia"),
   miHistorial: (params) => api.get("/asistencia/mi-historial", { params }),
 
-  // Admin — dashboard en vivo (polling)
   dashboardLive: (params) => api.get("/asistencia/dashboard-live", { params }),
   estadisticas: (params) => api.get("/asistencia/estadisticas", { params }),
 
-  // Admin — listado con filtros
   listar: (params) => api.get("/asistencia/listar", { params }),
-
-  // Admin — ajuste manual
   ajusteManual: (id, d) => api.put(`/asistencia/${id}/ajuste`, d),
 
-  // Exportación
-  exportar: (params) => api.get("/asistencia/exportar", {
-    params,
-    responseType: "blob",
-  }),
+  exportar: (params) =>
+    api.get("/asistencia/exportar", { params, responseType: "blob" }),
 };
 
 // ── usuariosService ───────────────────────────────────────────────────────────
