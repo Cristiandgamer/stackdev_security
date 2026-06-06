@@ -41,7 +41,11 @@ class Settings(BaseSettings):
     ALLOWED_HEADERS: List[str] = ["Authorization", "Content-Type"]
 
     # Trusted hosts for request validation
-    TRUSTED_HOSTS: List[str] = ["localhost", "127.0.0.1"]
+    TRUSTED_HOSTS: List[str] = [
+        "localhost",
+        "127.0.0.1",
+        "stackdevsecurity-production.up.railway.app",
+    ]
 
     # Uploads
     UPLOAD_DIR: str = "uploads"
@@ -53,3 +57,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
