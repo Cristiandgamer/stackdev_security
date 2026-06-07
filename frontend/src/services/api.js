@@ -2,17 +2,12 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || "/api" });
 
-// ── Lee el token desde localStorage (con fallback a sessionStorage)
 const readAuthToken = () => {
   try {
-    // Intentar localStorage primero (nueva versión)
-    let raw = localStorage.getItem("stackdev-auth");
-    // Fallback a sessionStorage (versión anterior)
-    if (!raw) raw = sessionStorage.getItem("stackdev-auth");
+    const raw = sessionStorage.getItem("stackdev-auth");
     if (!raw) return null;
     const auth = JSON.parse(raw);
-    // Zustand persist guarda en { state: { token, user } }
-    return auth?.state?.token ?? auth?.token ?? auth?.access_token ?? null;
+    return auth?.state?.token ?? null;
   } catch {
     return null;
   }
@@ -28,26 +23,18 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      // Limpiar ambos storages al expirar sesión
-      try {
-        localStorage.removeItem("stackdev-auth");
-        sessionStorage.removeItem("stackdev-auth");
-      } catch {
-        // ignorar
-      }
+      try { sessionStorage.removeItem("stackdev-auth"); } catch { }
       window.location.href = "/login";
     }
     return Promise.reject(err);
   }
 );
 
-// ── authService ───────────────────────────────────────────────────────────────
 export const authService = {
   login: (data) => api.post("/auth/login", data),
   me: () => api.get("/auth/me"),
 };
 
-// ── seguridadService ──────────────────────────────────────────────────────────
 export const seguridadService = {
   listarInstalaciones: (params) => api.get("/instalaciones", { params }),
   crearInstalacion: (d) => api.post("/instalaciones", d),
@@ -93,7 +80,6 @@ export const seguridadService = {
   estadisticas: () => api.get("/estadisticas/dashboard"),
 };
 
-// ── asistenciaService ─────────────────────────────────────────────────────────
 export const asistenciaService = {
   obtenerConfig: () => api.get("/asistencia/config"),
   actualizarConfig: (d) => api.put("/asistencia/config", d),
@@ -117,18 +103,13 @@ export const asistenciaService = {
 
   miAsistencia: () => api.get("/asistencia/mi-asistencia"),
   miHistorial: (params) => api.get("/asistencia/mi-historial", { params }),
-
   dashboardLive: (params) => api.get("/asistencia/dashboard-live", { params }),
   estadisticas: (params) => api.get("/asistencia/estadisticas", { params }),
-
   listar: (params) => api.get("/asistencia/listar", { params }),
   ajusteManual: (id, d) => api.put(`/asistencia/${id}/ajuste`, d),
-
-  exportar: (params) =>
-    api.get("/asistencia/exportar", { params, responseType: "blob" }),
+  exportar: (params) => api.get("/asistencia/exportar", { params, responseType: "blob" }),
 };
 
-// ── usuariosService ───────────────────────────────────────────────────────────
 export const usuariosService = {
   listar: () => api.get("/usuarios/"),
   crear: (d) => api.post("/usuarios/", d),

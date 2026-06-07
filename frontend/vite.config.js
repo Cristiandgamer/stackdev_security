@@ -12,5 +12,13 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+    // Forzar nombres de chunk únicos en cada build
+    rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name]-[hash].js`,
+        chunkFileNames: `assets/[name]-[hash].js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`,
+      },
+    },
   },
 });
