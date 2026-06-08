@@ -30,16 +30,25 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const { data } = await authService.login(form)
+
+      // 1. Guardar token y usuario en el store
       setAuth(data.access_token, data.user)
+
+      // 2. Esperar a que Zustand persista en sessionStorage antes de navegar
+      //    Esto evita la condición de carrera donde requests del dashboard
+      //    salen antes de que el token esté disponible en sessionStorage
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
       toast.success(`Bienvenido, ${data.user.nombre}`)
+
+      // 3. Navegar al dashboard
       navigate('/')
     } catch (err) {
       const detail = err.response?.data?.detail
       let msg = 'Credenciales incorrectas'
       if (typeof detail === 'string') msg = detail
-      else if (detail && typeof detail === 'object') msg = detail.msg || detail || msg
+      else if (detail && typeof detail === 'object') msg = detail.msg || msg
 
-      // If server provided retry_after, set block
       const retry = detail && detail.retry_after ? Number(detail.retry_after) : null
       if (retry) {
         const until = Date.now() + retry * 1000
@@ -98,7 +107,7 @@ export default function LoginPage() {
                 Demasiados intentos. Intenta nuevamente en {remaining} segundos.
               </div>
             )}
-            {/* Email */}
+
             <div>
               <label htmlFor="email" className="label">Correo electrónico</label>
               <div className="relative">
@@ -119,7 +128,6 @@ export default function LoginPage() {
               {errors.email && <p className="text-red-400 text-sm mt-1">{errors.email}</p>}
             </div>
 
-            {/* Contraseña */}
             <div>
               <label htmlFor="password" className="label">Contraseña</label>
               <div className="relative">

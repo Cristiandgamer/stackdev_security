@@ -23,8 +23,20 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      try { sessionStorage.removeItem("stackdev-auth"); } catch { }
-      window.location.href = "/login";
+      const token = readAuthToken();
+      // Solo redirigir a login si realmente no hay token guardado
+      // Esto evita el redirect cuando requests simultáneos llegan
+      // antes de que Zustand termine de guardar el token en sessionStorage
+      if (!token) {
+        try { sessionStorage.removeItem("stackdev-auth"); } catch { }
+        // Esperar un tick antes de redirigir para dar tiempo a Zustand
+        setTimeout(() => {
+          const tokenCheck = readAuthToken();
+          if (!tokenCheck && !window.location.pathname.includes("/login")) {
+            window.location.href = "/login";
+          }
+        }, 300);
+      }
     }
     return Promise.reject(err);
   }
@@ -45,7 +57,8 @@ export const seguridadService = {
   crearPunto: (instId, d) => api.post("/puntos-control", { ...d, instalacion_id: instId }),
   actualizarPunto: (id, d) => api.put(`/puntos-control/${id}`, d),
   regenerarQR: (id) => api.post(`/puntos-control/${id}/regenerar-qr`),
-  obtenerQRImagen: (id) => api.get(`/puntos-control/${id}/qr-imagen`, { responseType: "blob" }),
+  obtenerQRImagen: (id) =>
+    api.get(`/puntos-control/${id}/qr-imagen`, { responseType: "blob" }),
 
   verificarPunto: (d) => api.post("/verificaciones", d),
   progresoRonda: (turnoId) => api.get(`/turnos/${turnoId}/progreso-ronda`),
@@ -107,7 +120,8 @@ export const asistenciaService = {
   estadisticas: (params) => api.get("/asistencia/estadisticas", { params }),
   listar: (params) => api.get("/asistencia/listar", { params }),
   ajusteManual: (id, d) => api.put(`/asistencia/${id}/ajuste`, d),
-  exportar: (params) => api.get("/asistencia/exportar", { params, responseType: "blob" }),
+  exportar: (params) =>
+    api.get("/asistencia/exportar", { params, responseType: "blob" }),
 };
 
 export const usuariosService = {
