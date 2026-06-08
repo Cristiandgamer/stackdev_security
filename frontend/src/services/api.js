@@ -13,6 +13,9 @@ const readAuthToken = () => {
   }
 };
 
+// Flag que evita múltiples redirects simultáneos
+let redirectingToLogin = false;
+
 api.interceptors.request.use((config) => {
   const token = readAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -20,22 +23,27 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    // Reset del flag en cualquier respuesta exitosa
+    redirectingToLogin = false;
+    return r;
+  },
   (err) => {
     if (err.response?.status === 401) {
       const token = readAuthToken();
-      // Solo redirigir a login si realmente no hay token guardado
-      // Esto evita el redirect cuando requests simultáneos llegan
-      // antes de que Zustand termine de guardar el token en sessionStorage
-      if (!token) {
-        try { sessionStorage.removeItem("stackdev-auth"); } catch { }
-        // Esperar un tick antes de redirigir para dar tiempo a Zustand
-        setTimeout(() => {
-          const tokenCheck = readAuthToken();
-          if (!tokenCheck && !window.location.pathname.includes("/login")) {
-            window.location.href = "/login";
-          }
-        }, 300);
+      const enPaginaLogin = window.location.pathname === "/login";
+
+      // Solo hacer logout si:
+      // 1. No hay token (sesión realmente expirada, no race condition)
+      // 2. No estamos ya en /login
+      // 3. No hay ya un redirect en progreso
+      if (!token && !enPaginaLogin && !redirectingToLogin) {
+        redirectingToLogin = true;
+        try {
+          sessionStorage.removeItem("stackdev-auth");
+        } catch { }
+        // Usar replace para no agregar /login al historial del navegador
+        window.location.replace("/login");
       }
     }
     return Promise.reject(err);
@@ -54,7 +62,8 @@ export const seguridadService = {
   eliminarInstalacion: (id) => api.delete(`/instalaciones/${id}`),
 
   listarPuntos: (instId) => api.get(`/instalaciones/${instId}/puntos`),
-  crearPunto: (instId, d) => api.post("/puntos-control", { ...d, instalacion_id: instId }),
+  crearPunto: (instId, d) =>
+    api.post("/puntos-control", { ...d, instalacion_id: instId }),
   actualizarPunto: (id, d) => api.put(`/puntos-control/${id}`, d),
   regenerarQR: (id) => api.post(`/puntos-control/${id}/regenerar-qr`),
   obtenerQRImagen: (id) =>
@@ -62,7 +71,8 @@ export const seguridadService = {
 
   verificarPunto: (d) => api.post("/verificaciones", d),
   progresoRonda: (turnoId) => api.get(`/turnos/${turnoId}/progreso-ronda`),
-  verificacionesTurno: (turnoId) => api.get(`/turnos/${turnoId}/verificaciones`),
+  verificacionesTurno: (turnoId) =>
+    api.get(`/turnos/${turnoId}/verificaciones`),
 
   listarRondas: (instId) => api.get(`/instalaciones/${instId}/rondas`),
   crearRonda: (d) => api.post(`/rondas`, d),
@@ -111,13 +121,17 @@ export const asistenciaService = {
     if (foto) fd.append("foto", foto);
     let url = `/asistencia/salida?turno_id=${turnoId}&lat=${lat}&lon=${lon}`;
     if (observacion) url += `&observacion=${encodeURIComponent(observacion)}`;
-    return api.post(url, fd, { headers: { "Content-Type": "multipart/form-data" } });
+    return api.post(url, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
 
   miAsistencia: () => api.get("/asistencia/mi-asistencia"),
   miHistorial: (params) => api.get("/asistencia/mi-historial", { params }),
-  dashboardLive: (params) => api.get("/asistencia/dashboard-live", { params }),
-  estadisticas: (params) => api.get("/asistencia/estadisticas", { params }),
+  dashboardLive: (params) =>
+    api.get("/asistencia/dashboard-live", { params }),
+  estadisticas: (params) =>
+    api.get("/asistencia/estadisticas", { params }),
   listar: (params) => api.get("/asistencia/listar", { params }),
   ajusteManual: (id, d) => api.put(`/asistencia/${id}/ajuste`, d),
   exportar: (params) =>
