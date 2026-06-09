@@ -16,6 +16,9 @@ const readAuthToken = () => {
 // Flag que evita múltiples redirects simultáneos
 let redirectingToLogin = false;
 
+// Contador de reintentos para evitar loops infinitos
+const retryCount = new Map();
+
 api.interceptors.request.use((config) => {
   const token = readAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -26,9 +29,43 @@ api.interceptors.response.use(
   (r) => {
     // Reset del flag en cualquier respuesta exitosa
     redirectingToLogin = false;
+    // Limpiar contador de reintentos
+    const key = `${r.config.method}:${r.config.url}`;
+    retryCount.delete(key);
     return r;
   },
-  (err) => {
+  async (err) => {
+    const config = err.config;
+    const key = `${config.method}:${config.url}`;
+    const attempts = retryCount.get(key) || 0;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CASO 1: Error 401 en primer request (race condition de auth)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (
+      err.response?.status === 401 &&
+      attempts < 2 &&
+      !config.url.includes("/auth/login") &&
+      !config.url.includes("/auth/me")
+    ) {
+      // Incrementar contador de reintentos
+      retryCount.set(key, attempts + 1);
+
+      // Esperar 50ms a que Zustand persista el token en sessionStorage
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Releer el token (ahora debería estar disponible)
+      const token = readAuthToken();
+      if (token) {
+        // Token está disponible → reintentar request
+        config.headers.Authorization = `Bearer ${token}`;
+        return api.request(config);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CASO 2: Error 401 real (sesión expirada, token inválido, etc.)
+    // ═══════════════════════════════════════════════════════════════════════
     if (err.response?.status === 401) {
       const token = readAuthToken();
       const enPaginaLogin = window.location.pathname === "/login";
@@ -46,6 +83,7 @@ api.interceptors.response.use(
         window.location.replace("/login");
       }
     }
+
     return Promise.reject(err);
   }
 );
@@ -144,5 +182,3 @@ export const usuariosService = {
   actualizar: (id, d) => api.put(`/usuarios/${id}`, d),
   eliminar: (id) => api.delete(`/usuarios/${id}`),
 };
-
-export default api;

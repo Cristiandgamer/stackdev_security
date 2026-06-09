@@ -34,14 +34,13 @@ export default function LoginPage() {
       // 1. Guardar token y usuario en el store
       setAuth(data.access_token, data.user)
 
-      // 2. Esperar a que Zustand persista en sessionStorage antes de navegar
-      //    Esto evita la condición de carrera donde requests del dashboard
-      //    salen antes de que el token esté disponible en sessionStorage
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
+      // 2. Mostrar mensaje de bienvenida
       toast.success(`Bienvenido, ${data.user.nombre}`)
 
       // 3. Navegar al dashboard
+      // Nota: Zustand persiste en sessionStorage de forma síncrona,
+      // pero axios puede leer antes de que se complete.
+      // El interceptor de axios maneja reintentos automáticos.
       navigate('/')
     } catch (err) {
       const detail = err.response?.data?.detail
