@@ -140,10 +140,28 @@ class Asistencia(Base):
     id = Column(Integer, primary_key=True, index=True)
     turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
     guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
+    
+    # Entrada
     entrada = Column(DateTime(timezone=True))
-    salida = Column(DateTime(timezone=True))
     latitud_entrada = Column(Float)
     longitud_entrada = Column(Float)
+    distancia_entrada = Column(Float)
+    foto_entrada = Column(String(500))
+    
+    # Salida
+    salida = Column(DateTime(timezone=True))
+    latitud_salida = Column(Float)
+    longitud_salida = Column(Float)
+    distancia_salida = Column(Float)
+    foto_salida = Column(String(500))
+    
+    # Estado y cálculos
+    estado = Column(String(20), default="sin_marcar")  # ← IMPORTANTE
+    minutos_retraso = Column(Integer, default=0)      # ← IMPORTANTE
+    minutos_trabajados = Column(Integer)              # ← IMPORTANTE
+    horas_extra = Column(Float, default=0.0)          # ← IMPORTANTE
+    
+    # Observaciones
     observacion = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
