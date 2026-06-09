@@ -554,10 +554,10 @@ def estadisticas(
 
     return EstadisticasAsistenciaOut(
         total_turnos=total,
-        a_tiempo=conteo["a_tiempo"],
-        tardanzas=conteo["tardanza"],
-        faltas=conteo["falta"],
-        sin_marcar=conteo["sin_marcar"],
+        a_tiempo=a_tiempo,
+        tardanzas=tardanza,
+        faltas=falta,
+        sin_marcar=sin_marcar,
         porcentaje_puntualidad=puntualidad,
         promedio_minutos_retraso=promedio_retraso,
         total_horas_trabajadas=round(total_min_trabajados / 60, 2),
