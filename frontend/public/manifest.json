@@ -3,15 +3,47 @@
   "short_name": "StackSecurity",
   "description": "Sistema de Gestión de Guardias",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#0f1929",
   "theme_color": "#1e3a5f",
+  "categories": ["productivity", "utilities"],
+  "screenshots": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    }
+  ],
   "icons": [
     {
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Asistencia",
+      "short_name": "Asistencia",
+      "description": "Registrar asistencia",
+      "url": "/asistencia",
+      "icons": [
+        {
+          "src": "/favicon.svg",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
     }
   ]
 }

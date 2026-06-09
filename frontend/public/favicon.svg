@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!-- Fondo con esquinas redondeadas para maskable -->
+  <rect width="192" height="192" rx="45" fill="#1e3a5f"/>
+  
+  <!-- Escudo de seguridad -->
+  <g transform="translate(96, 96)">
+    <!-- Escudo exterior -->
+    <path d="M 0 -50 L 35 -30 L 35 0 Q 0 35 0 50 Q -35 35 -35 0 L -35 -30 Z" 
+          fill="#ffffff" stroke="none"/>
+    
+    <!-- Candado interior -->
+    <g transform="translate(0, 5)">
+      <!-- Cuerpo del candado -->
+      <rect x="-12" y="5" width="24" height="20" rx="2" fill="#1e3a5f"/>
+      
+      <!-- Arco del candado -->
+      <path d="M -8 5 Q -8 -8 0 -8 Q 8 -8 8 5" 
+            stroke="#1e3a5f" stroke-width="3" fill="none" stroke-linecap="round"/>
+      
+      <!-- Punto de cierre -->
+      <circle cx="0" cy="15" r="2" fill="#1e3a5f"/>
+    </g>
+  </g>
+</svg>
