@@ -19,7 +19,6 @@ const useAuthStore = create(
             version: 0,
           };
           sessionStorage.setItem("stackdev-auth", JSON.stringify(authData));
-          console.log("✓ Token guardado en sessionStorage:", !!token);
         } catch (err) {
           console.error("Error guardando en sessionStorage:", err);
         }
