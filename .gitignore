@@ -55,7 +55,7 @@ coverage.xml
 dmypy.json
 
 # Environments
-.env
+!frontend/.env
 .env.*
 
 # Django stuff:
