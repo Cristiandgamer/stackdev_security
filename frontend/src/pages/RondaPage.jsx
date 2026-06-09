@@ -357,7 +357,7 @@ function MapOverlay({ turno, puntos, onClose, onPuntoVerificado }) {
   }, [drawPoints, puntos])
 
   useEffect(() => {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN=pk.eyJ1IjoiY2hyMTJ0MTRuZCIsImEiOiJjbXBmdGFnMnowanVtMnJwdHV3Z3BjaTdwIn0.SJTHWlOq8QlRqf3CPcT5Wg
+    const token = import.meta.env.VITE_MAPBOX_TOKEN
     if (!token) {
       setGeoError('VITE_MAPBOX_TOKEN no configurado. Añade tu token en .env')
       return
