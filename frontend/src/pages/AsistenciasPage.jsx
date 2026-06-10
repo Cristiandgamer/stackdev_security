@@ -296,9 +296,12 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
 // COMPONENTE: PANEL DE MARCAJE (GUARDIA)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Este es solo el componente PanelMarcaje — reemplaza solo esa función
+// dentro de tu AsistenciasPage.jsx
+
 function PanelMarcaje({ turno, asistencia, onMarcado }) {
-  const [paso, setPaso]           = useState('inicio')  // inicio | camara_entrada | camara_salida | obs
-  const [fotoFile, setFotoFile]   = useState(null)
+  const [paso, setPaso] = useState('inicio')
+  const [fotoFile, setFotoFile] = useState(null)
   const [fotoPreview, setFotoPreview] = useState(null)
   const [observacion, setObservacion] = useState('')
   const gps = useGPS()
@@ -312,9 +315,8 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
   const { mutate: entrada, isPending: cargandoEntrada } = useMutation({
     mutationFn: () => asistenciaService.marcarEntrada(turno.id, gps.pos.lat, gps.pos.lng, fotoFile),
     onSuccess: () => {
-      toast.success('✅ Entrada registrada')
-      setPaso('inicio')
-      setFotoFile(null); setFotoPreview(null)
+      toast.success('Entrada registrada')
+      setPaso('inicio'); setFotoFile(null); setFotoPreview(null)
       onMarcado()
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
@@ -323,9 +325,8 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
   const { mutate: salida, isPending: cargandoSalida } = useMutation({
     mutationFn: () => asistenciaService.marcarSalida(turno.id, gps.pos.lat, gps.pos.lng, fotoFile, observacion),
     onSuccess: () => {
-      toast.success('✅ Salida registrada')
-      setPaso('inicio')
-      setFotoFile(null); setFotoPreview(null)
+      toast.success('Salida registrada')
+      setPaso('inicio'); setFotoFile(null); setFotoPreview(null)
       onMarcado()
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
@@ -334,7 +335,6 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
   const hayEntrada = !!asistencia?.entrada
   const haySalida  = !!asistencia?.salida
   const requiereFoto = config?.requiere_foto ?? true
-  const reconFacial  = config?.reconocimiento_facial ?? false
 
   const iniciarMarcaje = (tipo) => {
     if (!gps.pos) { toast.error('Esperando señal GPS…'); return }
@@ -347,13 +347,9 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
   }
 
   const onFotoCapturada = (file, preview) => {
-    setFotoFile(file)
-    setFotoPreview(preview)
-    if (paso === 'camara_entrada') {
-      setPaso('confirmar_entrada')
-    } else {
-      setPaso('obs')
-    }
+    setFotoFile(file); setFotoPreview(preview)
+    if (paso === 'camara_entrada') setPaso('confirmar_entrada')
+    else setPaso('obs')
   }
 
   if (paso === 'camara_entrada' || paso === 'camara_salida') {
@@ -366,7 +362,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         <CamaraSelfi
           onFoto={onFotoCapturada}
           onCancelar={() => setPaso('inicio')}
-          reconocimientoFacial={reconFacial}
+          reconocimientoFacial={config?.reconocimiento_facial ?? false}
         />
       </div>
     )
@@ -380,23 +376,24 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
           Confirmar salida
         </h3>
         {fotoPreview && (
-          <img src={fotoPreview} alt="Selfie" className="w-24 h-24 object-cover rounded-xl mx-auto" />
+          <img src={fotoPreview} alt="Selfie" className="w-24 h-24 object-cover rounded-2xl mx-auto" />
         )}
         <div>
           <label className="label">Observación (opcional)</label>
           <textarea
             className="input-field resize-none"
             rows={3}
-            placeholder="Novedades del turno, incidencias, estado del lugar…"
+            placeholder="Novedades del turno…"
             value={observacion}
             onChange={(e) => setObservacion(e.target.value)}
           />
         </div>
+        {/* GPS status inline — no tapa nada */}
         {gps.pos && (
-          <p className="text-[#94a3b8] text-xs flex items-center gap-1">
-            <MapPin className="w-3 h-3" />
-            GPS: {gps.pos.lat.toFixed(5)}, {gps.pos.lng.toFixed(5)} (±{Math.round(gps.pos.acc)}m)
-          </p>
+          <div className="flex items-center gap-2 text-[#94a3b8] text-sm bg-[#0f1929] rounded-xl px-3 py-2">
+            <MapPin className="w-4 h-4 text-green-400 flex-shrink-0" />
+            <span className="truncate">GPS ±{Math.round(gps.pos.acc)}m</span>
+          </div>
         )}
         <div className="flex gap-3">
           <button onClick={() => setPaso('inicio')} className="btn-secondary flex-1">Cancelar</button>
@@ -420,13 +417,16 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
           Confirmar entrada
         </h3>
         {fotoPreview && (
-          <img src={fotoPreview} alt="Selfie" className="w-32 h-32 object-cover rounded-xl mx-auto border-2 border-brand/40" />
+          <img src={fotoPreview} alt="Selfie" className="w-32 h-32 object-cover rounded-2xl mx-auto border-2 border-brand/40" />
         )}
         {gps.pos && (
-          <p className="text-[#94a3b8] text-sm flex items-center gap-1 justify-center">
-            <MapPin className="w-4 h-4 text-brand" />
-            {gps.pos.lat.toFixed(5)}, {gps.pos.lng.toFixed(5)} (±{Math.round(gps.pos.acc)}m)
-          </p>
+          <div className="flex items-center gap-2 text-[#94a3b8] text-sm bg-[#0f1929] rounded-xl px-3 py-2">
+            <MapPin className="w-4 h-4 text-brand flex-shrink-0" />
+            <span className="text-white text-sm font-mono truncate">
+              {gps.pos.lat.toFixed(5)}, {gps.pos.lng.toFixed(5)}
+            </span>
+            <span className="text-xs flex-shrink-0">±{Math.round(gps.pos.acc)}m</span>
+          </div>
         )}
         <div className="flex gap-3">
           <button onClick={() => setPaso('inicio')} className="btn-secondary flex-1">Cancelar</button>
@@ -435,96 +435,105 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
             disabled={cargandoEntrada || !gps.pos}
             className="btn-primary flex-1"
           >
-            {cargandoEntrada ? 'Registrando…' : '✅ Marcar entrada'}
+            {cargandoEntrada ? 'Registrando…' : 'Marcar entrada'}
           </button>
         </div>
       </div>
     )
   }
 
-  // ── Vista principal de marcaje ─────────────────────────────────────────────
+  // ── Vista principal ────────────────────────────────────────────
   return (
-    <div className="space-y-4">
-      {/* Estado GPS */}
-      <div className={`card p-4 flex items-center gap-3 border-l-4 ${
+    <div className="space-y-3">
+
+      {/* Estado GPS — diseño que no tapa texto */}
+      <div className={`card p-4 border-l-4 ${
         gps.pos ? 'border-l-green-500' : gps.error ? 'border-l-red-500' : 'border-l-yellow-500'
       }`}>
-        <MapPin className={`w-5 h-5 flex-shrink-0 ${
-          gps.pos ? 'text-green-400' : gps.error ? 'text-red-400' : 'text-yellow-400'
-        }`} />
-        <div className="flex-1 min-w-0">
-          {gps.loading && <p className="text-[#94a3b8] text-sm">Obteniendo ubicación GPS…</p>}
-          {gps.pos && (
-            <p className="text-green-400 text-sm font-medium">
-              GPS activo — precisión ±{Math.round(gps.pos.acc)}m
-            </p>
-          )}
-          {gps.error && <p className="text-red-400 text-sm">{gps.error}</p>}
+        <div className="flex items-start gap-3">
+          <MapPin className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+            gps.pos ? 'text-green-400' : gps.error ? 'text-red-400' : 'text-yellow-400'
+          }`} />
+          <div className="flex-1 min-w-0">
+            {gps.loading && (
+              <p className="text-[#94a3b8] text-sm">Obteniendo ubicación GPS…</p>
+            )}
+            {gps.pos && (
+              <>
+                <p className="text-green-400 text-sm font-semibold">GPS activo</p>
+                <p className="text-[#94a3b8] text-xs mt-0.5">Precisión ±{Math.round(gps.pos.acc)}m</p>
+              </>
+            )}
+            {gps.error && (
+              <>
+                <p className="text-red-400 text-sm font-semibold">Sin señal GPS</p>
+                <p className="text-[#94a3b8] text-xs mt-1 leading-relaxed">{gps.error}</p>
+                <button
+                  onClick={gps.obtener}
+                  className="mt-2 text-xs text-brand font-medium"
+                >
+                  Reintentar →
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        {(gps.error || (!gps.loading && !gps.pos)) && (
-          <button onClick={gps.obtener} className="btn-secondary !py-1 !px-3 text-xs">
-            Reintentar
-          </button>
+      </div>
+
+      {/* Info del turno */}
+      <div className="card p-4 space-y-2">
+        <p className="text-[#94a3b8] text-xs uppercase tracking-wide">Turno asignado</p>
+        <p className="text-white font-bold text-lg leading-tight">{turno.instalacion?.nombre || '—'}</p>
+        {turno.instalacion?.direccion && (
+          <p className="text-[#94a3b8] text-sm">{turno.instalacion.direccion}</p>
         )}
-      </div>
-
-      {/* Turno info */}
-      <div className="card p-5 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[#94a3b8] text-sm uppercase tracking-wide">Turno asignado</p>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            turno.estado === 'en_curso' ? 'bg-green-500/20 text-green-400' :
-            turno.estado === 'programado' ? 'bg-blue-500/20 text-blue-400' :
-            'bg-white/10 text-[#94a3b8]'
-          }`}>{turno.estado}</span>
-        </div>
-        <p className="text-white font-bold text-lg">{turno.instalacion?.nombre || '—'}</p>
-        <p className="text-[#94a3b8] text-sm">{turno.instalacion?.direccion || ''}</p>
-        <div className="flex items-center gap-4 text-sm text-[#94a3b8] pt-1">
-          <span>🕐 {fmtHora(turno.fecha_inicio)}</span>
+        <div className="flex items-center gap-2 text-sm text-[#94a3b8] pt-1">
+          <span className="font-mono">{fmtHora(turno.fecha_inicio)}</span>
           <span>→</span>
-          <span>{fmtHora(turno.fecha_fin)}</span>
+          <span className="font-mono">{fmtHora(turno.fecha_fin)}</span>
         </div>
       </div>
 
-      {/* Estado asistencia actual */}
+      {/* Estado asistencia */}
       {asistencia && (
-        <div className="card p-4 space-y-2 border-l-4 border-l-brand">
-          <p className="text-[#94a3b8] text-sm uppercase tracking-wide text-xs">Estado asistencia</p>
-          <div className="flex items-center gap-3">
+        <div className="card p-4 border-l-4 border-l-brand">
+          <p className="text-[#94a3b8] text-xs uppercase tracking-wide mb-2">Mi asistencia</p>
+          <div className="flex items-center gap-2 flex-wrap">
             <EstadoBadge estado={asistencia.estado} />
             {asistencia.minutos_retraso > 0 && (
-              <span className="text-yellow-400 text-sm">
-                {asistencia.minutos_retraso} min de retraso
-              </span>
+              <span className="text-yellow-400 text-sm">{asistencia.minutos_retraso} min tarde</span>
             )}
           </div>
           {asistencia.entrada && (
-            <p className="text-white text-sm">
-              Entrada: <span className="font-medium text-green-400">{fmtHora(asistencia.entrada)}</span>
-            </p>
-          )}
-          {asistencia.salida && (
-            <p className="text-white text-sm">
-              Salida: <span className="font-medium text-brand">{fmtHora(asistencia.salida)}</span>
-            </p>
-          )}
-          {asistencia.minutos_trabajados != null && (
-            <p className="text-[#94a3b8] text-sm">
-              Tiempo trabajado: <span className="text-white font-medium">{fmtMin(asistencia.minutos_trabajados)}</span>
-            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="bg-[#0f1929] rounded-xl p-2.5 text-center">
+                <p className="text-[#94a3b8] text-xs">Entrada</p>
+                <p className="text-green-400 font-bold text-base">{fmtHora(asistencia.entrada)}</p>
+              </div>
+              {asistencia.salida ? (
+                <div className="bg-[#0f1929] rounded-xl p-2.5 text-center">
+                  <p className="text-[#94a3b8] text-xs">Salida</p>
+                  <p className="text-brand font-bold text-base">{fmtHora(asistencia.salida)}</p>
+                </div>
+              ) : (
+                <div className="bg-[#0f1929] rounded-xl p-2.5 text-center">
+                  <p className="text-[#94a3b8] text-xs">Trabajando</p>
+                  <p className="text-[#94a3b8] font-bold text-base animate-pulse">En turno…</p>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
 
       {/* Botones de marcaje */}
       {!haySalida && (
-        <div className="grid grid-cols-1 gap-3">
+        <div className="space-y-3">
           {!hayEntrada ? (
             <button
               onClick={() => iniciarMarcaje('entrada')}
               disabled={!gps.pos || gps.loading}
-              className="btn-primary w-full text-lg py-5 disabled:opacity-50"
+              className="btn-primary w-full text-lg py-5 disabled:opacity-40"
             >
               <CheckCircle2 className="w-6 h-6" />
               Marcar Entrada
@@ -534,15 +543,17 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
             <button
               onClick={() => iniciarMarcaje('salida')}
               disabled={!gps.pos || gps.loading}
-              className="w-full text-lg py-5 inline-flex items-center justify-center gap-2
-                         font-medium rounded-xl transition-all min-h-[44px]
-                         bg-[#1e3a5f] border border-[#2d5490] text-white
-                         hover:bg-[#2d5490] disabled:opacity-50"
+              className="btn-secondary w-full text-lg py-5 disabled:opacity-40"
             >
               <XCircle className="w-6 h-6 text-brand" />
               Marcar Salida
               {requiereFoto && <Camera className="w-4 h-4 opacity-70" />}
             </button>
+          )}
+          {!gps.pos && !gps.loading && !gps.error && (
+            <p className="text-[#94a3b8] text-xs text-center">
+              Esperando señal GPS para habilitar el marcaje…
+            </p>
           )}
         </div>
       )}
@@ -552,19 +563,14 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
           <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto mb-2" />
           <p className="text-white font-semibold">Turno completado</p>
           <p className="text-[#94a3b8] text-sm mt-1">
-            Has completado tu jornada de {fmtMin(asistencia?.minutos_trabajados)}
+            {fmtMin(asistencia?.minutos_trabajados)} trabajados
           </p>
         </div>
-      )}
-
-      {!requiereFoto && (
-        <p className="text-[#94a3b8] text-xs text-center">
-          Modo sin foto activado por el administrador
-        </p>
       )}
     </div>
   )
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPONENTE: TARJETA GUARDIA EN DASHBOARD LIVE
@@ -1406,3 +1412,4 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
     </div>
   )
 }
+

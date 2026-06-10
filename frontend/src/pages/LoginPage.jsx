@@ -30,35 +30,22 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const { data } = await authService.login(form)
-
-      // 1. Guardar token y usuario en el store
       setAuth(data.access_token, data.user)
-
-      // 2. Mostrar mensaje de bienvenida
+      await new Promise((resolve) => setTimeout(resolve, 100))
       toast.success(`Bienvenido, ${data.user.nombre}`)
-
-      // 3. Navegar al dashboard
-      // Nota: Zustand persiste en sessionStorage de forma síncrona,
-      // pero axios puede leer antes de que se complete.
-      // El interceptor de axios maneja reintentos automáticos.
       navigate('/')
     } catch (err) {
       const detail = err.response?.data?.detail
       let msg = 'Credenciales incorrectas'
       if (typeof detail === 'string') msg = detail
       else if (detail && typeof detail === 'object') msg = detail.msg || msg
-
-      const retry = detail && detail.retry_after ? Number(detail.retry_after) : null
+      const retry = detail?.retry_after ? Number(detail.retry_after) : null
       if (retry) {
-        const until = Date.now() + retry * 1000
-        setBlockedUntil(until)
+        setBlockedUntil(Date.now() + retry * 1000)
         setRemaining(Math.ceil(retry))
-        toast.error(msg)
-        setErrors({ password: msg })
-      } else {
-        toast.error(msg)
-        setErrors({ password: msg })
       }
+      toast.error(msg)
+      setErrors({ password: msg })
     } finally {
       setLoading(false)
     }
@@ -68,112 +55,111 @@ export default function LoginPage() {
     if (!blockedUntil) return
     const iv = setInterval(() => {
       const secs = Math.ceil((blockedUntil - Date.now()) / 1000)
-      if (secs <= 0) {
-        setBlockedUntil(null)
-        setRemaining(0)
-        clearInterval(iv)
-      } else {
-        setRemaining(secs)
-      }
+      if (secs <= 0) { setBlockedUntil(null); setRemaining(0); clearInterval(iv) }
+      else setRemaining(secs)
     }, 1000)
     return () => clearInterval(iv)
   }, [blockedUntil])
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-[#0f2440] p-4">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-brand/5 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-[#1e3a5f]/80 rounded-full blur-3xl" />
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-[#0a1628] px-5 py-8">
+
+      {/* Logo */}
+      <div className="flex flex-col items-center mb-8">
+        <div className="w-20 h-20 bg-brand rounded-3xl flex items-center justify-center shadow-2xl shadow-brand/30 mb-4">
+          <Shield className="w-11 h-11 text-white" />
+        </div>
+        <h1 className="text-3xl font-bold text-white tracking-tight">Stack Security</h1>
+        <p className="text-[#94a3b8] mt-1 text-base">Sistema de Guardias</p>
       </div>
 
-      <div className="relative w-full max-w-md animate-slide-up">
-        <div className="flex flex-col items-center mb-8 text-center">
-          <div className="w-20 h-20 bg-brand rounded-2xl flex items-center justify-center shadow-2xl shadow-brand/30 mb-4">
-            <Shield className="w-11 h-11 text-white" />
+      {/* Card formulario */}
+      <div className="w-full max-w-sm bg-[#152032] border border-[#1e3a5f] rounded-3xl p-6 shadow-2xl">
+
+        {blockedUntil && Date.now() < blockedUntil && (
+          <div className="mb-4 p-3 rounded-2xl bg-red-900/40 border border-red-500/30 text-sm text-red-300 text-center">
+            Demasiados intentos. Espera {remaining}s
           </div>
-          <h1 className="text-3xl font-bold text-white">Stack Security</h1>
-          <p className="text-[#94a3b8] text-lg mt-1">Sistema de Seguridad</p>
-        </div>
+        )}
 
-        <div className="card p-8">
-          <h2 className="text-xl font-semibold text-white mb-6 text-center">
-            Iniciar sesión
-          </h2>
-
-          <form onSubmit={handleSubmit} noValidate className="space-y-5">
-            {blockedUntil && Date.now() < blockedUntil && (
-              <div className="p-3 rounded-lg bg-red-800/80 text-sm text-white text-center">
-                Demasiados intentos. Intenta nuevamente en {remaining} segundos.
-              </div>
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          {/* Email */}
+          <div>
+            <label htmlFor="email" className="label">Correo electrónico</label>
+            <div className="relative">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#475569]" />
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                placeholder="nombre@empresa.cl"
+                className={`input-field pl-12 ${errors.email ? 'border-red-500' : ''}`}
+                value={form.email}
+                onChange={(e) => {
+                  setForm(f => ({ ...f, email: e.target.value }))
+                  setErrors(er => ({ ...er, email: '' }))
+                }}
+              />
+            </div>
+            {errors.email && (
+              <p className="text-red-400 text-sm mt-1.5 flex items-center gap-1">
+                ⚠ {errors.email}
+              </p>
             )}
+          </div>
 
-            <div>
-              <label htmlFor="email" className="label">Correo electrónico</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#94a3b8]" />
-                <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="nombre@gmail.com"
-                  className={`input-field pl-14 ${errors.email ? 'border-red-500' : ''}`}
-                  value={form.email}
-                  onChange={(e) => {
-                    setForm(f => ({ ...f, email: e.target.value }))
-                    setErrors(er => ({ ...er, email: '' }))
-                  }}
-                />
-              </div>
-              {errors.email && <p className="text-red-400 text-sm mt-1">{errors.email}</p>}
+          {/* Contraseña */}
+          <div>
+            <label htmlFor="password" className="label">Contraseña</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#475569]" />
+              <input
+                id="password"
+                type={showPass ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="••••••••"
+                className={`input-field pl-12 pr-12 ${errors.password ? 'border-red-500' : ''}`}
+                value={form.password}
+                onChange={(e) => {
+                  setForm(f => ({ ...f, password: e.target.value }))
+                  setErrors(er => ({ ...er, password: '' }))
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass(v => !v)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#475569] hover:text-white transition-colors p-1"
+                aria-label={showPass ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
+            {errors.password && (
+              <p className="text-red-400 text-sm mt-1.5 flex items-center gap-1">
+                ⚠ {errors.password}
+              </p>
+            )}
+          </div>
 
-            <div>
-              <label htmlFor="password" className="label">Contraseña</label>
-              <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#94a3b8]" />
-                <input
-                  id="password"
-                  type={showPass ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  className={`input-field pl-14 pr-12 ${errors.password ? 'border-red-500' : ''}`}
-                  value={form.password}
-                  onChange={(e) => {
-                    setForm(f => ({ ...f, password: e.target.value }))
-                    setErrors(er => ({ ...er, password: '' }))
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPass(v => !v)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[#94a3b8] hover:text-white transition-colors !min-h-0 p-1"
-                  aria-label={showPass ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                >
-                  {showPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              {errors.password && <p className="text-red-400 text-sm mt-1">{errors.password}</p>}
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || (blockedUntil && Date.now() < blockedUntil)}
-              className="btn-primary w-full text-lg py-4 mt-2"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2 justify-center">
-                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Ingresando...
-                </span>
-              ) : 'Ingresar'}
-            </button>
-          </form>
-        </div>
-
-        <p className="text-center text-[#94a3b8] text-sm mt-6">
-          Stack Security © {new Date().getFullYear()}
-        </p>
+          {/* Botón */}
+          <button
+            type="submit"
+            disabled={loading || (blockedUntil && Date.now() < blockedUntil)}
+            className="btn-primary w-full mt-2 text-lg py-4"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2 justify-center">
+                <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Ingresando...
+              </span>
+            ) : 'Ingresar'}
+          </button>
+        </form>
       </div>
+
+      <p className="text-[#475569] text-sm mt-6">
+        Stack Security © {new Date().getFullYear()}
+      </p>
     </div>
   )
 }
