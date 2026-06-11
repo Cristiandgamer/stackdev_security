@@ -73,7 +73,7 @@ def seed_config_asistencia():
             )
             db.add(cfg)
             db.commit()
-            logger.info("✓ Configuración de asistencia inicializada")
+            logger.info("Configuración de asistencia inicializada")
     except Exception as e:
         logger.warning(f"No se pudo inicializar config asistencia: {e}")
     finally:
@@ -195,21 +195,25 @@ if os.path.exists(FRONTEND_DIST):
     # Si no existe → index.html (React Router maneja la ruta)
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
-        # Nunca interceptar rutas de API ni uploads con el fallback SPA
-        if full_path.startswith(("api/", "uploads/")):
+        # Normalizar path — quitar slash inicial si existe
+        clean = full_path.lstrip("/")
+
+        # ── Nunca interceptar rutas de API ni uploads ──────────────
+        # Verificar con y sin slash para cubrir todos los casos
+        api_prefixes = ("api/", "api", "uploads/", "uploads")
+        if any(clean == p or clean.startswith(p + "/") or clean.startswith(p)
+               for p in ("api", "uploads")):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
 
-        # Si el archivo existe en el dist, servirlo directamente
+        # ── Servir archivos estáticos que existan en el dist ───────
         # (favicon.svg, manifest.json, robots.txt, etc.)
-        file_path = os.path.join(FRONTEND_DIST, full_path)
-        if full_path and os.path.isfile(file_path):
-            return FileResponse(file_path)
+        if clean:
+            file_path = os.path.join(FRONTEND_DIST, clean)
+            if os.path.isfile(file_path):
+                return FileResponse(file_path)
 
-        # Todo lo demás → index.html para que React Router maneje la ruta
+        # ── Todo lo demás → index.html (React Router) ──────────────
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
 else:
-    logger.warning(
-        f"⚠ Frontend dist no encontrado en {FRONTEND_DIST} — modo API only. "
-        "Verifica que el Dockerfile ejecute el build del frontend correctamente."
-    )
+    logger.warning(f"Frontend dist no encontrado en {FRONTEND_DIST}")
