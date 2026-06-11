@@ -1262,8 +1262,10 @@ export default function AsistenciasPage() {
 function HistorialGuardia() {
   const { data, isLoading } = useQuery({
     queryKey: ['mi-historial-asistencia'],
-    queryFn: () => asistenciaService.miHistorial({ limit: 10 }).then((r) => r.data),
-    staleTime: 30_000,
+    queryFn: async () => {
+    const r = await asistenciaService.miHistorial({ limit: 10 })
+    return Array.isArray(r?.data) ? r.data : []
+},
   })
 
   if (isLoading) return <Spinner />
@@ -1304,14 +1306,21 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
     skip: 0, limit: 50,
   })
 
-  const { data, isLoading } = useQuery({
+  const { data = [], isLoading } = useQuery({
     queryKey: ['asistencia-historial', filtros],
-    queryFn: () => asistenciaService.listar({
-      ...filtros,
-      guardia_id:     filtros.guardia_id     || undefined,
-      instalacion_id: filtros.instalacion_id || undefined,
-      estado:         filtros.estado         || undefined,
-    }).then((r) => r.data),
+    queryFn: async () => {
+      const r = await asistenciaService.listar({
+        ...filtros,
+        guardia_id:     filtros.guardia_id     || undefined,
+        instalacion_id: filtros.instalacion_id || undefined,
+        estado:         filtros.estado         || undefined,
+      })
+      // Garantizar que siempre devuelve un array
+      const resultado = r?.data
+      if (Array.isArray(resultado)) return resultado
+      if (Array.isArray(resultado?.items)) return resultado.items
+      return []
+    },
     staleTime: 20_000,
   })
 
