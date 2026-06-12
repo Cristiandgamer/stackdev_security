@@ -4,6 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 import os
@@ -18,7 +19,6 @@ from app.routers import auth, usuarios, seguridad, asistencia
 
 
 def ensure_missing_columns():
-    """Agrega columnas faltantes sin borrar datos existentes."""
     with engine.connect() as conn:
         checks = [
             ("usuarios",        "apellido",            "VARCHAR(100)"),
@@ -56,7 +56,6 @@ def ensure_missing_columns():
 
 
 def seed_config_asistencia():
-    """Crea el registro de configuración de asistencia si no existe."""
     from app.models.seguridad_model import ConfigAsistencia
     from app.core.database import SessionLocal
     db = SessionLocal()
@@ -73,7 +72,7 @@ def seed_config_asistencia():
             )
             db.add(cfg)
             db.commit()
-            logger.info("Configuración de asistencia inicializada")
+            logger.info("✓ Configuración de asistencia inicializada")
     except Exception as e:
         logger.warning(f"No se pudo inicializar config asistencia: {e}")
     finally:
@@ -106,24 +105,16 @@ app = FastAPI(
 )
 
 # ── 1. ProxyHeadersMiddleware ─────────────────────────────────────────────────
-# Railway termina TLS en su proxy; esto restaura IP real y proto https.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # ── 2. TrustedHostMiddleware (OWASP A05) ──────────────────────────────────────
-# Configura en Railway: TRUSTED_HOSTS=["stackdevsecurity-production.up.railway.app","localhost"]
 _trusted_hosts = getattr(settings, "TRUSTED_HOSTS", [])
 if _trusted_hosts:
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=_trusted_hosts,
-    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
 else:
-    logger.warning(
-        "⚠ TRUSTED_HOSTS no configurado — TrustedHostMiddleware desactivado. "
-        "Agrega TRUSTED_HOSTS en Railway para protección contra Host Header Injection."
-    )
+    logger.warning("⚠ TRUSTED_HOSTS no configurado")
 
-# ── 3. Security Headers (OWASP A05) ──────────────────────────────────────────
+# ── 3. Security Headers ───────────────────────────────────────────────────────
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -144,7 +135,7 @@ async def add_security_headers(request: Request, call_next):
         )
     return response
 
-# ── 4. CORS (OWASP A05) ───────────────────────────────────────────────────────
+# ── 4. CORS ───────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -153,7 +144,7 @@ app.add_middleware(
     allow_headers=settings.ALLOWED_HEADERS,
 )
 
-# ── API Routers ───────────────────────────────────────────────────────────────
+# ── API Routers — registrar ANTES del mount de archivos estáticos ─────────────
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
 app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])
@@ -164,19 +155,12 @@ app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistenci
 def health():
     return {"status": "ok", "app": "Stack Dev Security"}
 
-# ── Archivos subidos por usuarios ─────────────────────────────────────────────
+# ── Archivos subidos ──────────────────────────────────────────────────────────
 if os.path.exists(settings.UPLOAD_DIR):
-    app.mount(
-        "/uploads",
-        StaticFiles(directory=settings.UPLOAD_DIR),
-        name="uploads",
-    )
+    app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 # ── Frontend SPA ──────────────────────────────────────────────────────────────
-# Dockerfile: WORKDIR /app → COPY --from=frontend-builder /frontend/dist ./frontend/dist
-# Resultado en contenedor: /app/frontend/dist
-# __file__ = /app/app/main.py → dirname(__file__) = /app/app
-# dirname(dirname(__file__)) = /app  →  /app/frontend/dist  ✓
+# El Dockerfile copia el dist en /app/frontend/dist
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "frontend", "dist",
@@ -185,35 +169,20 @@ FRONTEND_DIST = os.path.join(
 if os.path.exists(FRONTEND_DIST):
     logger.info(f"✓ Frontend encontrado en {FRONTEND_DIST}")
 
-    # /assets/** — JS, CSS y otros chunks generados por Vite
+    # Montar assets con hash (JS, CSS generados por Vite)
     assets_dir = os.path.join(FRONTEND_DIST, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    # SPA fallback — debe ir AL FINAL para no interceptar rutas de API
-    # Cualquier archivo que exista en dist se sirve directamente (favicon, manifest, etc.)
-    # Si no existe → index.html (React Router maneja la ruta)
-    @app.get("/{full_path:path}")
-    async def spa_fallback(full_path: str):
-        # Normalizar path — quitar slash inicial si existe
-        clean = full_path.lstrip("/")
-
-        # ── Nunca interceptar rutas de API ni uploads ──────────────
-        # Verificar con y sin slash para cubrir todos los casos
-        api_prefixes = ("api/", "api", "uploads/", "uploads")
-        if any(clean == p or clean.startswith(p + "/") or clean.startswith(p)
-               for p in ("api", "uploads")):
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
-
-        # ── Servir archivos estáticos que existan en el dist ───────
-        # (favicon.svg, manifest.json, robots.txt, etc.)
-        if clean:
-            file_path = os.path.join(FRONTEND_DIST, clean)
-            if os.path.isfile(file_path):
-                return FileResponse(file_path)
-
-        # ── Todo lo demás → index.html (React Router) ──────────────
-        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+    # Montar el dist completo como fallback SPA con html=True
+    # html=True hace que Starlette devuelva index.html para rutas no encontradas
+    # Esto es seguro porque los routers /api/* ya están registrados ANTES
+    # y FastAPI los resuelve primero — el mount solo captura lo que queda
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND_DIST, html=True),
+        name="spa",
+    )
 
 else:
-    logger.warning(f"Frontend dist no encontrado en {FRONTEND_DIST}")
+    logger.warning(f"⚠ Frontend dist no encontrado en {FRONTEND_DIST}")
