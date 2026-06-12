@@ -174,15 +174,38 @@ if os.path.exists(FRONTEND_DIST):
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    # Montar el dist completo como fallback SPA con html=True
-    # html=True hace que Starlette devuelva index.html para rutas no encontradas
-    # Esto es seguro porque los routers /api/* ya están registrados ANTES
-    # y FastAPI los resuelve primero — el mount solo captura lo que queda
-    app.mount(
-        "/",
-        StaticFiles(directory=FRONTEND_DIST, html=True),
-        name="spa",
-    )
+    # SPA fallback — esta ruta se registra AL FINAL, después de los routers.
+    # FastAPI/Starlette resuelve rutas en orden de registro y da prioridad
+    # a las rutas más específicas de los routers /api/* sobre este catch-all.
+    # Si una request no matchea ningún router (ej: /asistencias, /login,
+    # /turnos), cae aquí y se sirve index.html para que React Router
+    # maneje la navegación del lado del cliente.
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        clean = full_path.lstrip("/")
+
+        # ── Protección Path Traversal (OWASP A01/A05) ──────────────
+        # Resuelve la ruta absoluta y verifica que siga dentro de FRONTEND_DIST.
+        # Bloquea intentos como /../../etc/passwd, /..%2f.., rutas con \0, etc.
+        if clean:
+            requested_path = os.path.abspath(os.path.join(FRONTEND_DIST, clean))
+            frontend_root = os.path.abspath(FRONTEND_DIST)
+            if not requested_path.startswith(frontend_root + os.sep):
+                # Intento de escapar del directorio del frontend
+                if clean.startswith("api") or clean.startswith("uploads"):
+                    return JSONResponse({"detail": "Not Found"}, status_code=404)
+                return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+
+            if os.path.isfile(requested_path):
+                return FileResponse(requested_path)
+
+        # Cualquier ruta de API que llegue hasta aquí significa que no
+        # matcheó ningún router → 404 JSON real, nunca HTML
+        if clean.startswith("api") or clean.startswith("uploads"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+        # Rutas del SPA (/asistencias, /turnos, /login, etc.) → index.html
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
 else:
     logger.warning(f"⚠ Frontend dist no encontrado en {FRONTEND_DIST}")
