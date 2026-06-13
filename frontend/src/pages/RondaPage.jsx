@@ -158,9 +158,6 @@ function QRScanner({ onResult, onClose }) {
     </div>
   );
 }
-
-export default QRScanner;
-
 // ── Card de punto de control ──────────────────────────────────────────────────
 function PuntoCard({ punto, turnoId, gps, onVerificado }) {
   const [expandido, setExpandido] = useState(false)
