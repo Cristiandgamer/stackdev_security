@@ -1,8 +1,15 @@
 /**
- * AsistenciasPage.jsx
- * Sistema completo de asistencia:
- *  - Vista Guardia: marcaje entrada/salida con GPS + selfie + face-api.js opcional
- *  - Vista Admin: dashboard en vivo (polling 30s), filtros, ajuste manual, exportación Excel/CSV
+ * AsistenciasPage.jsx — CORREGIDO
+ * Fix: TypeError: d?.map is not a function
+ *
+ * Causa raíz: los queryFn de HistorialGuardia y HistorialAdmin no
+ * normalizaban la respuesta a array antes de devolverla.
+ * La API puede retornar:
+ *   - Un array directo          → r.data = [...]
+ *   - Un objeto paginado        → r.data = { items: [...], total: N }
+ *   - null / undefined          → error de red o 404
+ *
+ * Solución: helper toArray() que normaliza siempre a [].
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -18,6 +25,25 @@ import { asistenciaService, seguridadService } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { Modal, Spinner, EmptyState } from '../components/index.jsx'
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx'
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HELPER — normaliza cualquier respuesta a array (FIX PRINCIPAL)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convierte la respuesta de la API a un array seguro.
+ * Soporta:
+ *   - Array directo:           [...]
+ *   - Objeto paginado:         { items: [...] }
+ *   - Objeto con data:         { data: [...] }
+ *   - null / undefined / otro: []
+ */
+function toArray(value) {
+  if (Array.isArray(value)) return value
+  if (value && Array.isArray(value.items)) return value.items
+  if (value && Array.isArray(value.data))  return value.data
+  return []
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -71,8 +97,8 @@ function EstadoBadge({ estado }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function useGPS() {
-  const [pos, setPos]     = useState(null)
-  const [error, setError] = useState(null)
+  const [pos, setPos]         = useState(null)
+  const [error, setError]     = useState(null)
   const [loading, setLoading] = useState(false)
 
   const obtener = useCallback(() => {
@@ -101,38 +127,31 @@ function useGPS() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// COMPONENTE: CÁMARA + SELFIE (con face-api.js opcional)
+// COMPONENTE: CÁMARA + SELFIE
 // ══════════════════════════════════════════════════════════════════════════════
 
 function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
-  const videoRef      = useRef(null)
-  const canvasRef     = useRef(null)
-  const streamRef     = useRef(null)
+  const videoRef    = useRef(null)
+  const canvasRef   = useRef(null)
+  const streamRef   = useRef(null)
   const [listo, setListo]           = useState(false)
-  const [capturada, setCapturada]   = useState(null) // base64
-  const [faceApi, setFaceApi]       = useState(null) // módulo cargado dinámicamente
+  const [capturada, setCapturada]   = useState(null)
+  const [faceApi, setFaceApi]       = useState(null)
   const [detectando, setDetectando] = useState(false)
-  const [faceOk, setFaceOk]         = useState(null) // true | false | null
+  const [faceOk, setFaceOk]         = useState(null)
   const [errorCam, setErrorCam]     = useState(null)
 
-  // Cargar face-api.js solo si el admin lo activó
   useEffect(() => {
     if (!reconocimientoFacial) return
     import('@vladmandic/face-api').then(async (fa) => {
       try {
         const modelBase = (import.meta.env.VITE_FACE_API_MODEL_PATH || '/models/face-api').replace(/\/$/, '')
-        await Promise.all([
-          fa.nets.tinyFaceDetector.loadFromUri(modelBase),
-        ])
+        await Promise.all([fa.nets.tinyFaceDetector.loadFromUri(modelBase)])
         setFaceApi(fa)
-      } catch {
-        // Los modelos no están disponibles — seguir sin reconocimiento
-        setFaceApi(null)
-      }
+      } catch { setFaceApi(null) }
     }).catch(() => setFaceApi(null))
   }, [reconocimientoFacial])
 
-  // Iniciar cámara frontal
   useEffect(() => {
     navigator.mediaDevices?.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
@@ -143,9 +162,7 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
         videoRef.current.play()
         setListo(true)
       }
-    }).catch((e) => {
-      setErrorCam('No se pudo acceder a la cámara. Verifique los permisos.')
-    })
+    }).catch(() => setErrorCam('No se pudo acceder a la cámara. Verifique los permisos.'))
     return () => { streamRef.current?.getTracks().forEach((t) => t.stop()) }
   }, [])
 
@@ -153,28 +170,19 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
     if (!videoRef.current || !canvasRef.current) return
     const v = videoRef.current
     const c = canvasRef.current
-    c.width  = v.videoWidth
-    c.height = v.videoHeight
+    c.width = v.videoWidth; c.height = v.videoHeight
     c.getContext('2d').drawImage(v, 0, 0)
     const dataUrl = c.toDataURL('image/jpeg', 0.85)
     setCapturada(dataUrl)
 
-    // Detección facial si está disponible
     if (faceApi && reconocimientoFacial) {
       setDetectando(true)
       try {
-        const detections = await faceApi.detectAllFaces(
-          c, new faceApi.TinyFaceDetectorOptions()
-        )
+        const detections = await faceApi.detectAllFaces(c, new faceApi.TinyFaceDetectorOptions())
         setFaceOk(detections.length > 0)
-        if (detections.length === 0) {
-          toast.error('No se detectó ningún rostro. Intente de nuevo.')
-        }
-      } catch {
-        setFaceOk(null)
-      } finally {
-        setDetectando(false)
-      }
+        if (detections.length === 0) toast.error('No se detectó ningún rostro. Intente de nuevo.')
+      } catch { setFaceOk(null) }
+      finally { setDetectando(false) }
     }
   }
 
@@ -184,7 +192,6 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
       toast.error('Se requiere un rostro visible para confirmar.')
       return
     }
-    // Convertir base64 → File
     fetch(capturada)
       .then((r) => r.blob())
       .then((blob) => {
@@ -198,14 +205,10 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
       <div className="flex flex-col items-center gap-4 p-6 text-center">
         <Camera className="w-12 h-12 text-red-400" />
         <p className="text-red-400">{errorCam}</p>
-        <p className="text-[#94a3b8] text-sm">
-          También puede continuar sin foto si el administrador no la requiere.
-        </p>
+        <p className="text-[#94a3b8] text-sm">También puede continuar sin foto si el administrador no la requiere.</p>
         <div className="flex gap-3">
           <button onClick={onCancelar} className="btn-secondary">Cancelar</button>
-          <button onClick={() => onFoto(null, null)} className="btn-primary">
-            Continuar sin foto
-          </button>
+          <button onClick={() => onFoto(null, null)} className="btn-primary">Continuar sin foto</button>
         </div>
       </div>
     )
@@ -216,13 +219,7 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
       {!capturada ? (
         <>
           <div className="relative rounded-2xl overflow-hidden bg-black aspect-video">
-            <video
-              ref={videoRef}
-              className="w-full h-full object-cover"
-              playsInline
-              muted
-            />
-            {/* Marco guía */}
+            <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
             {listo && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="w-48 h-48 border-4 border-brand/70 rounded-full" />
@@ -235,12 +232,10 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
             )}
           </div>
           <canvas ref={canvasRef} className="hidden" />
-          <p className="text-[#94a3b8] text-sm text-center">
-            Centre su rostro en el círculo y presione capturar
-          </p>
+          <p className="text-[#94a3b8] text-sm text-center">Centre su rostro en el círculo y presione capturar</p>
           {reconocimientoFacial && !faceApi && (
             <p className="text-yellow-400 text-xs text-center">
-              ⚠️ Reconocimiento facial no disponible (modelos no cargados). La foto se tomará sin verificación.
+              ⚠️ Reconocimiento facial no disponible. La foto se tomará sin verificación.
             </p>
           )}
           <div className="flex gap-3">
@@ -262,7 +257,6 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
                 </div>
               </div>
             )}
-            {/* Indicador de detección */}
             {faceOk === true && (
               <div className="absolute top-3 left-3 flex items-center gap-2 bg-green-500/90 text-white px-3 py-1.5 rounded-xl text-sm font-medium">
                 <CheckCircle2 className="w-4 h-4" /> Rostro detectado
@@ -275,9 +269,7 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
             )}
           </div>
           <div className="flex gap-3">
-            <button onClick={() => { setCapturada(null); setFaceOk(null) }} className="btn-secondary flex-1">
-              Repetir
-            </button>
+            <button onClick={() => { setCapturada(null); setFaceOk(null) }} className="btn-secondary flex-1">Repetir</button>
             <button
               onClick={confirmar}
               disabled={detectando || (reconocimientoFacial && faceApi && faceOk === false)}
@@ -296,12 +288,9 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
 // COMPONENTE: PANEL DE MARCAJE (GUARDIA)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Este es solo el componente PanelMarcaje — reemplaza solo esa función
-// dentro de tu AsistenciasPage.jsx
-
 function PanelMarcaje({ turno, asistencia, onMarcado }) {
-  const [paso, setPaso] = useState('inicio')
-  const [fotoFile, setFotoFile] = useState(null)
+  const [paso, setPaso]             = useState('inicio')
+  const [fotoFile, setFotoFile]     = useState(null)
   const [fotoPreview, setFotoPreview] = useState(null)
   const [observacion, setObservacion] = useState('')
   const gps = useGPS()
@@ -332,9 +321,9 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
   })
 
-  const hayEntrada = !!asistencia?.entrada
-  const haySalida  = !!asistencia?.salida
-  const requiereFoto = config?.requiere_foto ?? true
+  const hayEntrada    = !!asistencia?.entrada
+  const haySalida     = !!asistencia?.salida
+  const requiereFoto  = config?.requiere_foto ?? true
 
   const iniciarMarcaje = (tipo) => {
     if (!gps.pos) { toast.error('Esperando señal GPS…'); return }
@@ -372,8 +361,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     return (
       <div className="card p-5 space-y-4">
         <h3 className="text-white font-semibold flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-green-400" />
-          Confirmar salida
+          <CheckCircle2 className="w-5 h-5 text-green-400" /> Confirmar salida
         </h3>
         {fotoPreview && (
           <img src={fotoPreview} alt="Selfie" className="w-24 h-24 object-cover rounded-2xl mx-auto" />
@@ -381,14 +369,12 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         <div>
           <label className="label">Observación (opcional)</label>
           <textarea
-            className="input-field resize-none"
-            rows={3}
+            className="input-field resize-none" rows={3}
             placeholder="Novedades del turno…"
             value={observacion}
             onChange={(e) => setObservacion(e.target.value)}
           />
         </div>
-        {/* GPS status inline — no tapa nada */}
         {gps.pos && (
           <div className="flex items-center gap-2 text-[#94a3b8] text-sm bg-[#0f1929] rounded-xl px-3 py-2">
             <MapPin className="w-4 h-4 text-green-400 flex-shrink-0" />
@@ -397,11 +383,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         )}
         <div className="flex gap-3">
           <button onClick={() => setPaso('inicio')} className="btn-secondary flex-1">Cancelar</button>
-          <button
-            onClick={() => salida()}
-            disabled={cargandoSalida || !gps.pos}
-            className="btn-primary flex-1"
-          >
+          <button onClick={() => salida()} disabled={cargandoSalida || !gps.pos} className="btn-primary flex-1">
             {cargandoSalida ? 'Registrando…' : 'Confirmar salida'}
           </button>
         </div>
@@ -413,8 +395,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     return (
       <div className="card p-5 space-y-4">
         <h3 className="text-white font-semibold flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-green-400" />
-          Confirmar entrada
+          <CheckCircle2 className="w-5 h-5 text-green-400" /> Confirmar entrada
         </h3>
         {fotoPreview && (
           <img src={fotoPreview} alt="Selfie" className="w-32 h-32 object-cover rounded-2xl mx-auto border-2 border-brand/40" />
@@ -430,11 +411,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         )}
         <div className="flex gap-3">
           <button onClick={() => setPaso('inicio')} className="btn-secondary flex-1">Cancelar</button>
-          <button
-            onClick={() => entrada()}
-            disabled={cargandoEntrada || !gps.pos}
-            className="btn-primary flex-1"
-          >
+          <button onClick={() => entrada()} disabled={cargandoEntrada || !gps.pos} className="btn-primary flex-1">
             {cargandoEntrada ? 'Registrando…' : 'Marcar entrada'}
           </button>
         </div>
@@ -442,11 +419,8 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     )
   }
 
-  // ── Vista principal ────────────────────────────────────────────
   return (
     <div className="space-y-3">
-
-      {/* Estado GPS — diseño que no tapa texto */}
       <div className={`card p-4 border-l-4 ${
         gps.pos ? 'border-l-green-500' : gps.error ? 'border-l-red-500' : 'border-l-yellow-500'
       }`}>
@@ -455,9 +429,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
             gps.pos ? 'text-green-400' : gps.error ? 'text-red-400' : 'text-yellow-400'
           }`} />
           <div className="flex-1 min-w-0">
-            {gps.loading && (
-              <p className="text-[#94a3b8] text-sm">Obteniendo ubicación GPS…</p>
-            )}
+            {gps.loading && <p className="text-[#94a3b8] text-sm">Obteniendo ubicación GPS…</p>}
             {gps.pos && (
               <>
                 <p className="text-green-400 text-sm font-semibold">GPS activo</p>
@@ -468,19 +440,13 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
               <>
                 <p className="text-red-400 text-sm font-semibold">Sin señal GPS</p>
                 <p className="text-[#94a3b8] text-xs mt-1 leading-relaxed">{gps.error}</p>
-                <button
-                  onClick={gps.obtener}
-                  className="mt-2 text-xs text-brand font-medium"
-                >
-                  Reintentar →
-                </button>
+                <button onClick={gps.obtener} className="mt-2 text-xs text-brand font-medium">Reintentar →</button>
               </>
             )}
           </div>
         </div>
       </div>
 
-      {/* Info del turno */}
       <div className="card p-4 space-y-2">
         <p className="text-[#94a3b8] text-xs uppercase tracking-wide">Turno asignado</p>
         <p className="text-white font-bold text-lg leading-tight">{turno.instalacion?.nombre || '—'}</p>
@@ -494,7 +460,6 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         </div>
       </div>
 
-      {/* Estado asistencia */}
       {asistencia && (
         <div className="card p-4 border-l-4 border-l-brand">
           <p className="text-[#94a3b8] text-xs uppercase tracking-wide mb-2">Mi asistencia</p>
@@ -526,7 +491,6 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         </div>
       )}
 
-      {/* Botones de marcaje */}
       {!haySalida && (
         <div className="space-y-3">
           {!hayEntrada ? (
@@ -535,8 +499,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
               disabled={!gps.pos || gps.loading}
               className="btn-primary w-full text-lg py-5 disabled:opacity-40"
             >
-              <CheckCircle2 className="w-6 h-6" />
-              Marcar Entrada
+              <CheckCircle2 className="w-6 h-6" /> Marcar Entrada
               {requiereFoto && <Camera className="w-4 h-4 opacity-70" />}
             </button>
           ) : (
@@ -545,15 +508,12 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
               disabled={!gps.pos || gps.loading}
               className="btn-secondary w-full text-lg py-5 disabled:opacity-40"
             >
-              <XCircle className="w-6 h-6 text-brand" />
-              Marcar Salida
+              <XCircle className="w-6 h-6 text-brand" /> Marcar Salida
               {requiereFoto && <Camera className="w-4 h-4 opacity-70" />}
             </button>
           )}
           {!gps.pos && !gps.loading && !gps.error && (
-            <p className="text-[#94a3b8] text-xs text-center">
-              Esperando señal GPS para habilitar el marcaje…
-            </p>
+            <p className="text-[#94a3b8] text-xs text-center">Esperando señal GPS…</p>
           )}
         </div>
       )}
@@ -562,15 +522,12 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
         <div className="card p-5 text-center border-l-4 border-l-green-500">
           <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto mb-2" />
           <p className="text-white font-semibold">Turno completado</p>
-          <p className="text-[#94a3b8] text-sm mt-1">
-            {fmtMin(asistencia?.minutos_trabajados)} trabajados
-          </p>
+          <p className="text-[#94a3b8] text-sm mt-1">{fmtMin(asistencia?.minutos_trabajados)} trabajados</p>
         </div>
       )}
     </div>
   )
 }
-
 
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPONENTE: TARJETA GUARDIA EN DASHBOARD LIVE
@@ -613,20 +570,12 @@ function TarjetaGuardiaLive({ item, onAjuste }) {
         <div className="flex items-center gap-2 flex-shrink-0">
           <EstadoBadge estado={item.estado_asistencia} />
           {item.foto_entrada && (
-            <button
-              onClick={() => setVerFoto(true)}
-              className="btn-ghost !p-2 !min-h-0"
-              title="Ver selfie de entrada"
-            >
+            <button onClick={() => setVerFoto(true)} className="btn-ghost !p-2 !min-h-0" title="Ver selfie">
               <ImageIcon className="w-4 h-4" />
             </button>
           )}
           {item.asistencia_id && (
-            <button
-              onClick={() => onAjuste(item)}
-              className="btn-ghost !p-2 !min-h-0"
-              title="Ajuste manual"
-            >
+            <button onClick={() => onAjuste(item)} className="btn-ghost !p-2 !min-h-0" title="Ajuste manual">
               <Pencil className="w-4 h-4" />
             </button>
           )}
@@ -654,16 +603,12 @@ function TarjetaGuardiaLive({ item, onAjuste }) {
         </div>
       </div>
 
-      {/* Lightbox selfie */}
       {verFoto && item.foto_entrada && (
         <div
           className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
           onClick={() => setVerFoto(false)}
         >
-          <button
-            className="absolute top-4 right-4 p-2 bg-black/40 rounded-xl text-white"
-            onClick={() => setVerFoto(false)}
-          >
+          <button className="absolute top-4 right-4 p-2 bg-black/40 rounded-xl text-white" onClick={() => setVerFoto(false)}>
             <X className="w-6 h-6" />
           </button>
           <img
@@ -672,9 +617,6 @@ function TarjetaGuardiaLive({ item, onAjuste }) {
             className="max-w-sm w-full rounded-2xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
-          <p className="absolute bottom-4 text-white/60 text-sm">
-            {item.guardia_nombre} {item.guardia_apellido} — selfie de entrada
-          </p>
         </div>
       )}
     </div>
@@ -695,17 +637,13 @@ function ModalAjuste({ item, onClose, onGuardado }) {
 
   const { mutate, isPending } = useMutation({
     mutationFn: () => asistenciaService.ajusteManual(item.asistencia_id, {
-      estado: form.estado,
+      estado:      form.estado,
       observacion: form.observacion || undefined,
-      entrada: form.entrada ? new Date(form.entrada).toISOString() : undefined,
-      salida: form.salida ? new Date(form.salida).toISOString() : undefined,
+      entrada:     form.entrada ? new Date(form.entrada).toISOString() : undefined,
+      salida:      form.salida  ? new Date(form.salida).toISOString()  : undefined,
     }),
-    onSuccess: () => {
-      toast.success('Asistencia ajustada correctamente')
-      onGuardado()
-      onClose()
-    },
-    onError: (e) => toast.error(e.response?.data?.detail || e.message),
+    onSuccess: () => { toast.success('Asistencia ajustada'); onGuardado(); onClose() },
+    onError:   (e) => toast.error(e.response?.data?.detail || e.message),
   })
 
   return (
@@ -714,7 +652,6 @@ function ModalAjuste({ item, onClose, onGuardado }) {
         <p className="text-white font-semibold">{item.guardia_nombre} {item.guardia_apellido}</p>
         <p className="text-[#94a3b8] text-sm">{item.instalacion_nombre}</p>
       </div>
-
       <div>
         <label className="label">Estado</label>
         <select className="input-field" value={form.estado}
@@ -725,27 +662,23 @@ function ModalAjuste({ item, onClose, onGuardado }) {
           <option value="sin_marcar">Sin marcar</option>
         </select>
       </div>
-
       <div>
         <label className="label">Entrada (ajuste)</label>
         <input type="datetime-local" className="input-field" value={form.entrada}
           onChange={(e) => setForm((f) => ({ ...f, entrada: e.target.value }))} />
       </div>
-
       <div>
         <label className="label">Salida (ajuste)</label>
         <input type="datetime-local" className="input-field" value={form.salida}
           onChange={(e) => setForm((f) => ({ ...f, salida: e.target.value }))} />
       </div>
-
       <div>
         <label className="label">Motivo del ajuste</label>
         <textarea className="input-field resize-none" rows={3}
-          placeholder="Explique el motivo del ajuste manual…"
+          placeholder="Explique el motivo…"
           value={form.observacion}
           onChange={(e) => setForm((f) => ({ ...f, observacion: e.target.value }))} />
       </div>
-
       <div className="flex gap-3">
         <button onClick={onClose} className="btn-secondary flex-1">Cancelar</button>
         <button onClick={() => mutate()} disabled={isPending} className="btn-primary flex-1">
@@ -757,7 +690,7 @@ function ModalAjuste({ item, onClose, onGuardado }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// COMPONENTE: CONFIGURACIÓN DEL SISTEMA
+// COMPONENTE: CONFIGURACIÓN
 // ══════════════════════════════════════════════════════════════════════════════
 
 function PanelConfig({ config, onActualizado }) {
@@ -772,15 +705,12 @@ function PanelConfig({ config, onActualizado }) {
   const { mutate, isPending } = useMutation({
     mutationFn: () => asistenciaService.actualizarConfig(form),
     onSuccess: () => { toast.success('Configuración actualizada'); onActualizado() },
-    onError: (e) => toast.error(e.response?.data?.detail || e.message),
+    onError:   (e) => toast.error(e.response?.data?.detail || e.message),
   })
 
   return (
     <div className="space-y-5">
-      <p className="text-[#94a3b8] text-sm">
-        Estos parámetros aplican globalmente a todo el sistema de asistencia.
-      </p>
-
+      <p className="text-[#94a3b8] text-sm">Estos parámetros aplican globalmente al sistema de asistencia.</p>
       <div className="grid sm:grid-cols-3 gap-4">
         <div>
           <label className="label">Tolerancia tardanza (min)</label>
@@ -804,7 +734,6 @@ function PanelConfig({ config, onActualizado }) {
           <p className="text-[#94a3b8] text-xs mt-1">Radio máximo desde la instalación</p>
         </div>
       </div>
-
       <div className="grid sm:grid-cols-2 gap-4">
         <label className="card p-4 flex items-center gap-4 cursor-pointer hover:border-brand/50 transition-colors">
           <input type="checkbox" className="w-5 h-5 rounded accent-brand"
@@ -812,23 +741,19 @@ function PanelConfig({ config, onActualizado }) {
             onChange={(e) => setForm((f) => ({ ...f, requiere_foto: e.target.checked }))} />
           <div>
             <p className="text-white font-medium">Requerir selfie al marcar</p>
-            <p className="text-[#94a3b8] text-xs">El guardia debe tomarse una foto al marcar entrada y salida</p>
+            <p className="text-[#94a3b8] text-xs">El guardia debe tomarse una foto al marcar entrada/salida</p>
           </div>
         </label>
-
         <label className="card p-4 flex items-center gap-4 cursor-pointer hover:border-brand/50 transition-colors">
           <input type="checkbox" className="w-5 h-5 rounded accent-brand"
             checked={form.reconocimiento_facial}
             onChange={(e) => setForm((f) => ({ ...f, reconocimiento_facial: e.target.checked }))} />
           <div>
             <p className="text-white font-medium">Reconocimiento facial (opcional)</p>
-            <p className="text-[#94a3b8] text-xs">
-              Detecta que hay un rostro humano en la selfie. Requiere conexión y modelos cargados.
-            </p>
+            <p className="text-[#94a3b8] text-xs">Detecta que hay un rostro humano en la selfie</p>
           </div>
         </label>
       </div>
-
       <button onClick={() => mutate()} disabled={isPending} className="btn-primary">
         {isPending ? 'Guardando…' : <><Save className="w-4 h-4" /> Guardar configuración</>}
       </button>
@@ -841,54 +766,39 @@ function PanelConfig({ config, onActualizado }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function PanelExportar({ instalaciones, guardias }) {
-  const hoy = new Date().toISOString().slice(0, 10)
-  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-    .toISOString().slice(0, 10)
-
-  const [form, setForm] = useState({
-    fecha_inicio:   primerDiaMes,
-    fecha_fin:      hoy,
-    guardia_id:     '',
-    instalacion_id: '',
-    formato:        'excel',
-  })
+  const hoy          = new Date().toISOString().slice(0, 10)
+  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+  const [form, setForm]           = useState({ fecha_inicio: primerDiaMes, fecha_fin: hoy, guardia_id: '', instalacion_id: '', formato: 'excel' })
   const [descargando, setDescargando] = useState(false)
 
   const exportar = async () => {
-    if (!form.fecha_inicio || !form.fecha_fin) {
-      return toast.error('Seleccione rango de fechas')
-    }
+    if (!form.fecha_inicio || !form.fecha_fin) return toast.error('Seleccione rango de fechas')
     setDescargando(true)
     try {
       const params = {
-        fecha_inicio:   form.fecha_inicio,
-        fecha_fin:      form.fecha_fin,
-        formato:        form.formato,
+        fecha_inicio: form.fecha_inicio,
+        fecha_fin:    form.fecha_fin,
+        formato:      form.formato,
         ...(form.guardia_id     && { guardia_id:     Number(form.guardia_id) }),
         ...(form.instalacion_id && { instalacion_id: Number(form.instalacion_id) }),
       }
       const res = await asistenciaService.exportar(params)
-      const ext  = form.formato === 'excel' ? 'xlsx' : 'csv'
-      const url  = URL.createObjectURL(res.data)
-      const a    = document.createElement('a')
-      a.href     = url
-      a.download = `asistencias_${form.fecha_inicio}_${form.fecha_fin}.${ext}`
-      a.click()
-      URL.revokeObjectURL(url)
+      const ext = form.formato === 'excel' ? 'xlsx' : 'csv'
+      const url = URL.createObjectURL(res.data)
+      const a   = document.createElement('a')
+      a.href = url; a.download = `asistencias_${form.fecha_inicio}_${form.fecha_fin}.${ext}`
+      a.click(); URL.revokeObjectURL(url)
       toast.success('Reporte descargado')
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Error al exportar')
-    } finally {
-      setDescargando(false)
-    }
+    } finally { setDescargando(false) }
   }
 
   return (
     <div className="space-y-5">
       <p className="text-[#94a3b8] text-sm">
-        Genera el reporte de asistencia en Excel (con colores por estado) o CSV (compatible con cualquier software de nómina).
+        Genera el reporte de asistencia en Excel (con colores) o CSV (compatible con software de nómina).
       </p>
-
       <div className="grid sm:grid-cols-2 gap-4">
         <div>
           <label className="label">Fecha inicio *</label>
@@ -905,7 +815,7 @@ function PanelExportar({ instalaciones, guardias }) {
           <select className="input-field" value={form.guardia_id}
             onChange={(e) => setForm((f) => ({ ...f, guardia_id: e.target.value }))}>
             <option value="">Todos los guardias</option>
-            {guardias?.map((g) => (
+            {toArray(guardias).map((g) => (
               <option key={g.id} value={g.id}>{g.nombre} {g.apellido}</option>
             ))}
           </select>
@@ -915,13 +825,12 @@ function PanelExportar({ instalaciones, guardias }) {
           <select className="input-field" value={form.instalacion_id}
             onChange={(e) => setForm((f) => ({ ...f, instalacion_id: e.target.value }))}>
             <option value="">Todas las instalaciones</option>
-            {instalaciones?.map((i) => (
+            {toArray(instalaciones).map((i) => (
               <option key={i.id} value={i.id}>{i.nombre}</option>
             ))}
           </select>
         </div>
       </div>
-
       <div>
         <label className="label">Formato de exportación</label>
         <div className="grid grid-cols-2 gap-3">
@@ -941,12 +850,8 @@ function PanelExportar({ instalaciones, guardias }) {
           ))}
         </div>
       </div>
-
       <button onClick={exportar} disabled={descargando} className="btn-primary w-full sm:w-auto">
-        {descargando
-          ? <><Spinner className="w-4 h-4" /> Generando…</>
-          : <><Download className="w-5 h-5" /> Descargar reporte</>
-        }
+        {descargando ? 'Generando…' : <><Download className="w-5 h-5" /> Descargar reporte</>}
       </button>
     </div>
   )
@@ -957,29 +862,25 @@ function PanelExportar({ instalaciones, guardias }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function AsistenciasPage() {
-  const { user } = useAuthStore()
-  const qc = useQueryClient()
-  const isAdmin = ['admin', 'supervisor'].includes(user?.rol)
-
-  // tabs admin: live | historial | exportar | config
-  const [tabAdmin, setTabAdmin] = useState('live')
+  const { user }   = useAuthStore()
+  const qc         = useQueryClient()
+  const isAdmin    = ['admin', 'supervisor'].includes(user?.rol)
+  const [tabAdmin, setTabAdmin]     = useState('live')
   const [ajusteItem, setAjusteItem] = useState(null)
-
-  // Filtros dashboard live
-  const [fechaLive, setFechaLive]           = useState(new Date().toISOString().slice(0, 10))
+  const [fechaLive, setFechaLive]   = useState(new Date().toISOString().slice(0, 10))
   const [instalacionLive, setInstalacionLive] = useState('')
 
   // ── Datos base ─────────────────────────────────────────────────────────────
   const { data: instalaciones } = useQuery({
     queryKey: ['instalaciones'],
-    queryFn: () => seguridadService.listarInstalaciones().then((r) => r.data),
+    queryFn: () => seguridadService.listarInstalaciones().then((r) => toArray(r.data)),
     staleTime: 60_000,
     retry: false,
   })
 
   const { data: guardias } = useQuery({
     queryKey: ['guardias-activos'],
-    queryFn: () => seguridadService.listarGuardias({ activo: true }).then((r) => r.data),
+    queryFn: () => seguridadService.listarGuardias({ activo: true }).then((r) => toArray(r.data)),
     staleTime: 60_000,
     enabled: isAdmin,
     retry: false,
@@ -996,7 +897,7 @@ export default function AsistenciasPage() {
     retry: false,
   })
 
-  const { data: miAsistencia, refetch: refetchAsistencia, isError: asistenciaError } = useQuery({
+  const { data: miAsistencia, refetch: refetchAsistencia } = useQuery({
     queryKey: ['mi-asistencia'],
     queryFn: () => asistenciaService.miAsistencia().then((r) => r.data),
     enabled: !isAdmin,
@@ -1004,33 +905,28 @@ export default function AsistenciasPage() {
     retry: false,
   })
 
-  // ── Dashboard live (polling 30s) ───────────────────────────────────────────
-  const { data: liveData, isLoading: loadLive, dataUpdatedAt, isError: liveError } = useQuery({
+  // ── Dashboard live ─────────────────────────────────────────────────────────
+  const { data: liveData, isLoading: loadLive, dataUpdatedAt } = useQuery({
     queryKey: ['asistencia-live', fechaLive, instalacionLive],
     queryFn: () => asistenciaService.dashboardLive({
       fecha: fechaLive,
       ...(instalacionLive && { instalacion_id: Number(instalacionLive) }),
-    }).then((r) => r.data),
+    }).then((r) => toArray(r.data)),
     enabled: isAdmin && tabAdmin === 'live',
     refetchInterval: 30_000,
     staleTime: 25_000,
     retry: false,
   })
 
-  // ── Estadísticas para live ─────────────────────────────────────────────────
   const { data: statsLive } = useQuery({
     queryKey: ['asistencia-stats-live', fechaLive],
-    queryFn: () => asistenciaService.estadisticas({
-      fecha_inicio: fechaLive,
-      fecha_fin: fechaLive,
-    }).then((r) => r.data),
+    queryFn: () => asistenciaService.estadisticas({ fecha_inicio: fechaLive, fecha_fin: fechaLive }).then((r) => r.data),
     enabled: isAdmin && tabAdmin === 'live',
     refetchInterval: 30_000,
     retry: false,
   })
 
-  // ── Config ─────────────────────────────────────────────────────────────────
-  const { data: config, refetch: refetchConfig, isError: configError } = useQuery({
+  const { data: config, refetch: refetchConfig } = useQuery({
     queryKey: ['asistencia-config'],
     queryFn: () => asistenciaService.obtenerConfig().then((r) => r.data),
     staleTime: 60_000,
@@ -1059,11 +955,7 @@ export default function AsistenciasPage() {
           ) : loadTurno ? (
             <Spinner />
           ) : !turnoActivo ? (
-            <EmptyState
-              icon={Clock}
-              title="Sin turno activo"
-              description="No tienes un turno asignado para marcar asistencia en este momento."
-            />
+            <EmptyState icon={Clock} title="Sin turno activo" description="No tienes un turno asignado para marcar asistencia en este momento." />
           ) : (
             <PanelMarcaje
               turno={turnoActivo}
@@ -1074,8 +966,6 @@ export default function AsistenciasPage() {
               }}
             />
           )}
-
-          {/* Historial reciente */}
           <HistorialGuardia />
         </div>
       </ErrorBoundary>
@@ -1086,190 +976,166 @@ export default function AsistenciasPage() {
   // VISTA ADMIN / SUPERVISOR
   // ══════════════════════════════════════════════════════════════════════════
   const tabs = [
-    { id: 'live',     label: 'En vivo',      icon: RefreshCw },
-    { id: 'historial',label: 'Historial',    icon: ClipboardList },
-    { id: 'exportar', label: 'Exportar',     icon: Download },
-    { id: 'config',   label: 'Configuración',icon: Settings },
+    { id: 'live',      label: 'En vivo',       icon: RefreshCw },
+    { id: 'historial', label: 'Historial',     icon: ClipboardList },
+    { id: 'exportar',  label: 'Exportar',      icon: Download },
+    { id: 'config',    label: 'Configuración', icon: Settings },
   ]
 
   return (
     <ErrorBoundary>
       <div className="max-w-5xl mx-auto space-y-5 animate-slide-up">
 
-      {/* Modal ajuste manual */}
-      <Modal
-        open={!!ajusteItem}
-        onClose={() => setAjusteItem(null)}
-        title="Ajuste manual de asistencia"
-        size="md"
-      >
-        {ajusteItem && (
-          <ModalAjuste
-            item={ajusteItem}
-            onClose={() => setAjusteItem(null)}
-            onGuardado={() => {
-              qc.invalidateQueries({ queryKey: ['asistencia-live'] })
-              qc.invalidateQueries({ queryKey: ['asistencia-historial'] })
-            }}
-          />
-        )}
-      </Modal>
+        <Modal open={!!ajusteItem} onClose={() => setAjusteItem(null)} title="Ajuste manual de asistencia" size="md">
+          {ajusteItem && (
+            <ModalAjuste
+              item={ajusteItem}
+              onClose={() => setAjusteItem(null)}
+              onGuardado={() => {
+                qc.invalidateQueries({ queryKey: ['asistencia-live'] })
+                qc.invalidateQueries({ queryKey: ['asistencia-historial'] })
+              }}
+            />
+          )}
+        </Modal>
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand/20 rounded-xl flex items-center justify-center">
-            <ClipboardList className="w-5 h-5 text-brand" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white">Asistencias</h1>
-            <p className="text-[#94a3b8] text-sm">Control de entrada/salida y reportes de nómina</p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-brand/20 rounded-xl flex items-center justify-center">
+              <ClipboardList className="w-5 h-5 text-brand" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Asistencias</h1>
+              <p className="text-[#94a3b8] text-sm">Control de entrada/salida y reportes</p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 flex-wrap">
-        {tabs.map((t) => {
-          const Icon = t.icon
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTabAdmin(t.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                tabAdmin === t.id
-                  ? 'bg-brand text-white'
-                  : 'bg-white/5 text-[#94a3b8] hover:bg-white/10'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {t.label}
-            </button>
-          )
-        })}
-      </div>
+        <div className="flex gap-2 flex-wrap">
+          {tabs.map((t) => {
+            const Icon = t.icon
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTabAdmin(t.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                  tabAdmin === t.id ? 'bg-brand text-white' : 'bg-white/5 text-[#94a3b8] hover:bg-white/10'
+                }`}
+              >
+                <Icon className="w-4 h-4" />{t.label}
+              </button>
+            )
+          })}
+        </div>
 
-      {/* ── TAB: EN VIVO ───────────────────────────────────────────────────── */}
-      {tabAdmin === 'live' && (
-        <div className="space-y-5">
+        {/* ── TAB: EN VIVO ─────────────────────────────────────────────────── */}
+        {tabAdmin === 'live' && (
+          <div className="space-y-5">
+            <div className="flex flex-wrap gap-3 items-center">
+              <input type="date" className="input-field !w-auto !min-h-0 py-2 text-sm"
+                value={fechaLive} onChange={(e) => setFechaLive(e.target.value)} />
+              <select className="input-field !w-auto !min-h-0 py-2 text-sm"
+                value={instalacionLive} onChange={(e) => setInstalacionLive(e.target.value)}>
+                <option value="">Todas las instalaciones</option>
+                {toArray(instalaciones).map((i) => (
+                  <option key={i.id} value={i.id}>{i.nombre}</option>
+                ))}
+              </select>
+              {dataUpdatedAt > 0 && (
+                <span className="text-[#94a3b8] text-xs ml-auto">
+                  Actualizado: {new Date(dataUpdatedAt).toLocaleTimeString('es-CL')}
+                  <span className="ml-1 text-[#475569]">(auto 30s)</span>
+                </span>
+              )}
+            </div>
 
-          {/* Filtros */}
-          <div className="flex flex-wrap gap-3 items-center">
-            <input type="date" className="input-field !w-auto !min-h-0 py-2 text-sm"
-              value={fechaLive}
-              onChange={(e) => setFechaLive(e.target.value)} />
-            <select className="input-field !w-auto !min-h-0 py-2 text-sm"
-              value={instalacionLive}
-              onChange={(e) => setInstalacionLive(e.target.value)}>
-              <option value="">Todas las instalaciones</option>
-              {instalaciones?.map((i) => (
-                <option key={i.id} value={i.id}>{i.nombre}</option>
-              ))}
-            </select>
-            {dataUpdatedAt > 0 && (
-              <span className="text-[#94a3b8] text-xs ml-auto">
-                Actualizado: {new Date(dataUpdatedAt).toLocaleTimeString('es-CL')}
-                <span className="ml-1 text-[#475569]">(auto 30s)</span>
-              </span>
+            {statsLive && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'A tiempo',   val: statsLive.a_tiempo,   color: 'bg-green-500/20 text-green-400',   icon: UserCheck },
+                  { label: 'Tardanzas',  val: statsLive.tardanzas,  color: 'bg-yellow-500/20 text-yellow-400', icon: Timer },
+                  { label: 'Faltas',     val: statsLive.faltas,     color: 'bg-red-500/20 text-red-400',       icon: UserX },
+                  { label: 'Sin marcar', val: statsLive.sin_marcar, color: 'bg-white/5 text-[#94a3b8]',        icon: Clock },
+                ].map((s) => {
+                  const Icon = s.icon
+                  return (
+                    <div key={s.label} className="card p-4 flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${s.color}`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[#94a3b8] text-xs">{s.label}</p>
+                        <p className="text-white text-xl font-bold">{s.val ?? '—'}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {loadLive ? (
+              <Spinner />
+            ) : !toArray(liveData).length ? (
+              <EmptyState icon={Users} title="Sin turnos para esta fecha" description="No hay turnos programados para el día seleccionado." />
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-3">
+                {toArray(liveData).map((item) => (
+                  <TarjetaGuardiaLive key={item.turno_id} item={item} onAjuste={setAjusteItem} />
+                ))}
+              </div>
             )}
           </div>
+        )}
 
-          {/* Tarjetas estadísticas */}
-          {statsLive && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {[
-                { label: 'A tiempo',   val: statsLive.a_tiempo,   color: 'bg-green-500/20 text-green-400',  icon: UserCheck },
-                { label: 'Tardanzas',  val: statsLive.tardanzas,  color: 'bg-yellow-500/20 text-yellow-400',icon: Timer },
-                { label: 'Faltas',     val: statsLive.faltas,     color: 'bg-red-500/20 text-red-400',      icon: UserX },
-                { label: 'Sin marcar', val: statsLive.sin_marcar, color: 'bg-white/5 text-[#94a3b8]',       icon: Clock },
-              ].map((s) => {
-                const Icon = s.icon
-                return (
-                  <div key={s.label} className="card p-4 flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${s.color}`}>
-                      <Icon className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-[#94a3b8] text-xs">{s.label}</p>
-                      <p className="text-white text-xl font-bold">{s.val ?? '—'}</p>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+        {tabAdmin === 'historial' && (
+          <HistorialAdmin instalaciones={instalaciones} guardias={guardias} onAjuste={setAjusteItem} />
+        )}
 
-          {/* Lista en vivo */}
-          {loadLive ? (
-            <Spinner />
-          ) : !liveData?.length ? (
-            <EmptyState
-              icon={Users}
-              title="Sin turnos para esta fecha"
-              description="No hay turnos programados para el día seleccionado."
-            />
-          ) : (
-            <div className="grid sm:grid-cols-2 gap-3">
-              {liveData.map((item) => (
-                <TarjetaGuardiaLive
-                  key={item.turno_id}
-                  item={item}
-                  onAjuste={setAjusteItem}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {tabAdmin === 'exportar' && (
+          <div className="card p-6">
+            <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
+              <Download className="w-5 h-5 text-brand" /> Exportar reporte de nómina
+            </h2>
+            <PanelExportar instalaciones={instalaciones} guardias={guardias} />
+          </div>
+        )}
 
-      {/* ── TAB: HISTORIAL ─────────────────────────────────────────────────── */}
-      {tabAdmin === 'historial' && (
-        <HistorialAdmin
-          instalaciones={instalaciones}
-          guardias={guardias}
-          onAjuste={setAjusteItem}
-        />
-      )}
-
-      {/* ── TAB: EXPORTAR ──────────────────────────────────────────────────── */}
-      {tabAdmin === 'exportar' && (
-        <div className="card p-6">
-          <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-            <Download className="w-5 h-5 text-brand" /> Exportar reporte de nómina
-          </h2>
-          <PanelExportar instalaciones={instalaciones} guardias={guardias} />
-        </div>
-      )}
-
-      {/* ── TAB: CONFIGURACIÓN ─────────────────────────────────────────────── */}
-      {tabAdmin === 'config' && (
-        <div className="card p-6">
-          <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-            <Settings className="w-5 h-5 text-brand" /> Configuración del sistema
-          </h2>
-          <PanelConfig config={config} onActualizado={refetchConfig} />
-        </div>
-      )}
-    </div>
+        {tabAdmin === 'config' && (
+          <div className="card p-6">
+            <h2 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-brand" /> Configuración del sistema
+            </h2>
+            <PanelConfig config={config} onActualizado={refetchConfig} />
+          </div>
+        )}
+      </div>
     </ErrorBoundary>
   )
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENTE: Historial del guardia (vista guardia)
+// SUB-COMPONENTE: Historial del guardia
+// FIX: queryFn normaliza la respuesta con toArray()
 // ══════════════════════════════════════════════════════════════════════════════
 
 function HistorialGuardia() {
   const { data, isLoading } = useQuery({
     queryKey: ['mi-historial-asistencia'],
     queryFn: async () => {
-    const r = await asistenciaService.miHistorial({ limit: 10 })
-    return Array.isArray(r?.data) ? r.data : []
-},
+      try {
+        const r = await asistenciaService.miHistorial({ limit: 10 })
+        // FIX: toArray() evita el "d?.map is not a function"
+        return toArray(r?.data)
+      } catch {
+        return []
+      }
+    },
+    // initialData garantiza que data siempre sea array incluso antes del fetch
+    initialData: [],
   })
 
   if (isLoading) return <Spinner />
-  if (!data?.length) return null
+  if (!data.length) return null
 
   return (
     <div className="card p-5 space-y-3">
@@ -1282,7 +1148,9 @@ function HistorialGuardia() {
             <EstadoBadge estado={a.estado} />
             <div className="flex-1 min-w-0 text-sm">
               <p className="text-white">{fmtHora(a.entrada)} → {fmtHora(a.salida)}</p>
-              <p className="text-[#94a3b8] text-xs">{fmt(a.entrada, { day:'2-digit', month:'short', year:'numeric' })}</p>
+              <p className="text-[#94a3b8] text-xs">
+                {fmt(a.entrada, { day: '2-digit', month: 'short', year: 'numeric' })}
+              </p>
             </div>
             {a.minutos_trabajados != null && (
               <span className="text-[#94a3b8] text-xs flex-shrink-0">{fmtMin(a.minutos_trabajados)}</span>
@@ -1295,7 +1163,8 @@ function HistorialGuardia() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENTE: Historial admin con filtros
+// SUB-COMPONENTE: Historial admin
+// FIX: queryFn normaliza la respuesta con toArray()
 // ══════════════════════════════════════════════════════════════════════════════
 
 function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
@@ -1309,18 +1178,21 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
   const { data = [], isLoading } = useQuery({
     queryKey: ['asistencia-historial', filtros],
     queryFn: async () => {
-      const r = await asistenciaService.listar({
-        ...filtros,
-        guardia_id:     filtros.guardia_id     || undefined,
-        instalacion_id: filtros.instalacion_id || undefined,
-        estado:         filtros.estado         || undefined,
-      })
-      // Garantizar que siempre devuelve un array
-      const resultado = r?.data
-      if (Array.isArray(resultado)) return resultado
-      if (Array.isArray(resultado?.items)) return resultado.items
-      return []
+      try {
+        const r = await asistenciaService.listar({
+          ...filtros,
+          guardia_id:     filtros.guardia_id     || undefined,
+          instalacion_id: filtros.instalacion_id || undefined,
+          estado:         filtros.estado         || undefined,
+        })
+        // FIX: toArray() evita el "d?.map is not a function"
+        return toArray(r?.data)
+      } catch {
+        return []
+      }
     },
+    // initialData garantiza array aunque el fetch falle
+    initialData: [],
     staleTime: 20_000,
   })
 
@@ -1328,7 +1200,6 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
 
   return (
     <div className="space-y-4">
-      {/* Filtros */}
       <div className="card p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div>
           <label className="label text-xs">Desde</label>
@@ -1345,7 +1216,7 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
           <select className="input-field !min-h-0 py-2 text-sm"
             value={filtros.guardia_id} onChange={(e) => set('guardia_id', e.target.value)}>
             <option value="">Todos</option>
-            {guardias?.map((g) => (
+            {toArray(guardias).map((g) => (
               <option key={g.id} value={g.id}>{g.nombre} {g.apellido}</option>
             ))}
           </select>
@@ -1355,7 +1226,7 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
           <select className="input-field !min-h-0 py-2 text-sm"
             value={filtros.instalacion_id} onChange={(e) => set('instalacion_id', e.target.value)}>
             <option value="">Todas</option>
-            {instalaciones?.map((i) => (
+            {toArray(instalaciones).map((i) => (
               <option key={i.id} value={i.id}>{i.nombre}</option>
             ))}
           </select>
@@ -1373,8 +1244,7 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
         </div>
       </div>
 
-      {/* Tabla */}
-      {isLoading ? <Spinner /> : !data?.length ? (
+      {isLoading ? <Spinner /> : !data.length ? (
         <EmptyState icon={ClipboardList} title="Sin registros" description="No hay asistencias con los filtros seleccionados." />
       ) : (
         <div className="space-y-2">
@@ -1421,4 +1291,3 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
     </div>
   )
 }
-
