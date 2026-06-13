@@ -69,7 +69,6 @@ function QRScanner({ onResult, onClose }) {
       { fps: 10, qrbox: { width: 240, height: 240 } },
       (text) => {
         // 1. Pausamos el escaneo de inmediato (síncrono y seguro)
-        // Esto congela la cámara visualmente y bloquea nuevas lecturas instantáneamente.
         if (scanner.isScanning) {
           scanner.pause(true); 
         }
@@ -91,11 +90,10 @@ function QRScanner({ onResult, onClose }) {
     .then(() => setActivo(true))
     .catch(e => setError('No se puede acceder a la cámara. Permita el acceso en su navegador.'));
 
-    // Limpieza estricta al desmontar el componente
+    // Limpieza estricta al desmontar el componente (Salvavidas)
     return () => {
       if (scannerRef.current) {
         const instance = scannerRef.current;
-        // Limpiamos la referencia del ref primero para evitar llamadas duplicadas
         scannerRef.current = null; 
 
         if (instance.isScanning) {
@@ -105,7 +103,21 @@ function QRScanner({ onResult, onClose }) {
         }
       }
     };
-  }, [onResult]); // Añadido onResult como dependencia por buena práctica
+  }, [onResult]);
+
+  // NUEVA FUNCIÓN: Apaga la cámara PRIMERO, luego cierra la pantalla
+  const manejarCancelacionSegura = async () => {
+    if (scannerRef.current && scannerRef.current.isScanning) {
+      try {
+        setActivo(false);
+        await scannerRef.current.stop(); // Apagado limpio mientras el DOM existe
+      } catch (err) {
+        console.warn("El escáner ya estaba cerrado o deteniéndose:", err);
+      }
+    }
+    // Una vez apagado el hardware, es seguro avisarle al padre que desmonte el componente
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
@@ -114,7 +126,8 @@ function QRScanner({ onResult, onClose }) {
           <QrCode className="w-5 h-5 text-brand" />
           <span className="text-white font-semibold text-lg">Escanear QR</span>
         </div>
-        <button onClick={onClose} className="btn-secondary !py-2 !px-4 text-base">
+        {/* CAMBIO AQUÍ: Ahora llama a manejarCancelacionSegura */}
+        <button onClick={manejarCancelacionSegura} className="btn-secondary !py-2 !px-4 text-base">
           Cancelar
         </button>
       </div>
@@ -123,7 +136,8 @@ function QRScanner({ onResult, onClose }) {
         <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
           <AlertCircle className="w-16 h-16 text-red-400" />
           <p className="text-white text-center text-lg">{error}</p>
-          <button onClick={onClose} className="btn-primary">Volver</button>
+          {/* CAMBIO AQUÍ TAMBIÉN por seguridad */}
+          <button onClick={manejarCancelacionSegura} className="btn-primary">Volver</button>
         </div>
       ) : (
         <>
@@ -142,8 +156,10 @@ function QRScanner({ onResult, onClose }) {
         </>
       )}
     </div>
-  )
+  );
 }
+
+export default QRScanner;
 
 // ── Card de punto de control ──────────────────────────────────────────────────
 function PuntoCard({ punto, turnoId, gps, onVerificado }) {
