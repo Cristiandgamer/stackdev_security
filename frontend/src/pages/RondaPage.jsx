@@ -56,29 +56,40 @@ function StatusBadge({ verificado }) {
 
 // ── Escáner QR ────────────────────────────────────────────────────────────────
 function QRScanner({ onResult, onClose }) {
-  const scannerRef = useRef(null)
-  const [error, setError] = useState(null)
-  const [activo, setActivo] = useState(false)
+  const scannerRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [activo, setActivo] = useState(false);
 
   useEffect(() => {
-    const scanner = new Html5Qrcode('qr-reader')
-    scannerRef.current = scanner
+    const scanner = new Html5Qrcode('qr-reader');
+    scannerRef.current = scanner;
 
     scanner.start(
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 240, height: 240 } },
       (text) => {
-        scanner.stop().then(() => onResult(text)).catch(() => onResult(text))
+        // ✅ VERIFICACIÓN 1: Antes de detener tras escanear con éxito
+        if (scanner && scanner.isScanning) { 
+          scanner.stop()
+            .then(() => onResult(text))
+            .catch(() => onResult(text));
+        } else {
+          onResult(text);
+        }
       },
-      () => {}
+      () => {} // Ignorar errores de escaneo continuo
     )
     .then(() => setActivo(true))
-    .catch(e => setError('No se puede acceder a la cámara. Permita el acceso en su navegador.'))
+    .catch(e => setError('No se puede acceder a la cámara. Permita el acceso en su navegador.'));
 
+    // Función de limpieza al desmontar el componente
     return () => {
-      scanner.stop().catch(() => {})
-    }
-  }, [])
+      // ✅ VERIFICACIÓN 2: Evita detener algo que no está corriendo o ya se detuvo
+      if (scanner && scanner.isScanning) {
+        scanner.stop().catch((err) => console.log("Error al detener en cleanup:", err));
+      }
+    };
+  }, [onResult]); // Añadido onResult como dependencia por buena práctica
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
