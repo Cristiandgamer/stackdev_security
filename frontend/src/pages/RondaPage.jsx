@@ -63,43 +63,46 @@ function QRScanner({ onResult, onClose }) {
   useEffect(() => {
     const scanner = new Html5Qrcode('qr-reader');
     scannerRef.current = scanner;
-    
-    // CANDADO LÓGICO: Evita que se intente detener más de una vez
-    let yaSeDetuvo = false; 
 
     scanner.start(
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 240, height: 240 } },
       (text) => {
-        // Si ya iniciamos el proceso de detención, ignoramos lecturas extra
-        if (yaSeDetuvo) return; 
-
-        if (scanner && scanner.isScanning) {
-          yaSeDetuvo = true; // Cerramos el candado inmediatamente
-          
-          scanner.stop()
-            .then(() => {
-              setActivo(false);
-              onResult(text);
-            })
-            .catch((err) => {
-              console.warn("Error controlado al detener en escaneo:", err);
-              onResult(text); // Ejecutamos el resultado de todos modos
-            });
+        // 1. Pausamos el escaneo de inmediato (síncrono y seguro)
+        // Esto congela la cámara visualmente y bloquea nuevas lecturas instantáneamente.
+        if (scanner.isScanning) {
+          scanner.pause(true); 
         }
+
+        // 2. Ejecutamos el resultado hacia el componente padre
+        onResult(text);
+
+        // 3. Intentamos apagar el hardware de forma asíncrona y segura
+        setTimeout(() => {
+          if (scannerRef.current && scannerRef.current.isScanning) {
+            scannerRef.current.stop()
+              .then(() => setActivo(false))
+              .catch((err) => console.warn("Aviso: El escáner ya se había detenido:", err));
+          }
+        }, 100);
       },
-      () => {} // Ignorar errores de escaneo continuo
+      () => {} // Ignorar errores de muestreo continuo
     )
     .then(() => setActivo(true))
     .catch(e => setError('No se puede acceder a la cámara. Permita el acceso en su navegador.'));
 
-    // Limpieza al desmontar el componente
+    // Limpieza estricta al desmontar el componente
     return () => {
-      if (scanner && scanner.isScanning && !yaSeDetuvo) {
-        yaSeDetuvo = true; // Cerramos el candado en el desmontaje
-        scanner.stop()
-          .then(() => setActivo(false))
-          .catch((err) => console.log("Escáner ya estaba cerrado en desmontaje:", err));
+      if (scannerRef.current) {
+        const instance = scannerRef.current;
+        // Limpiamos la referencia del ref primero para evitar llamadas duplicadas
+        scannerRef.current = null; 
+
+        if (instance.isScanning) {
+          instance.stop()
+            .then(() => setActivo(false))
+            .catch((err) => console.log("Limpio: Escáner cerrado en desmontaje."));
+        }
       }
     };
   }, [onResult]); // Añadido onResult como dependencia por buena práctica
