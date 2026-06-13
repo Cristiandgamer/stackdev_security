@@ -63,18 +63,29 @@ function QRScanner({ onResult, onClose }) {
   useEffect(() => {
     const scanner = new Html5Qrcode('qr-reader');
     scannerRef.current = scanner;
+    
+    // CANDADO LÓGICO: Evita que se intente detener más de una vez
+    let yaSeDetuvo = false; 
 
     scanner.start(
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 240, height: 240 } },
       (text) => {
-        // ✅ VERIFICACIÓN 1: Antes de detener tras escanear con éxito
-        if (scanner && scanner.isScanning) { 
+        // Si ya iniciamos el proceso de detención, ignoramos lecturas extra
+        if (yaSeDetuvo) return; 
+
+        if (scanner && scanner.isScanning) {
+          yaSeDetuvo = true; // Cerramos el candado inmediatamente
+          
           scanner.stop()
-            .then(() => onResult(text))
-            .catch(() => onResult(text));
-        } else {
-          onResult(text);
+            .then(() => {
+              setActivo(false);
+              onResult(text);
+            })
+            .catch((err) => {
+              console.warn("Error controlado al detener en escaneo:", err);
+              onResult(text); // Ejecutamos el resultado de todos modos
+            });
         }
       },
       () => {} // Ignorar errores de escaneo continuo
@@ -82,11 +93,13 @@ function QRScanner({ onResult, onClose }) {
     .then(() => setActivo(true))
     .catch(e => setError('No se puede acceder a la cámara. Permita el acceso en su navegador.'));
 
-    // Función de limpieza al desmontar el componente
+    // Limpieza al desmontar el componente
     return () => {
-      // ✅ VERIFICACIÓN 2: Evita detener algo que no está corriendo o ya se detuvo
-      if (scanner && scanner.isScanning) {
-        scanner.stop().catch((err) => console.log("Error al detener en cleanup:", err));
+      if (scanner && scanner.isScanning && !yaSeDetuvo) {
+        yaSeDetuvo = true; // Cerramos el candado en el desmontaje
+        scanner.stop()
+          .then(() => setActivo(false))
+          .catch((err) => console.log("Escáner ya estaba cerrado en desmontaje:", err));
       }
     };
   }, [onResult]); // Añadido onResult como dependencia por buena práctica
