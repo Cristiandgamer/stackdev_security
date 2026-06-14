@@ -167,7 +167,7 @@ function PuntoCard({ punto, turnoId, gps, onVerificado }) {
   const { mutate: verificar, isPending } = useMutation({
     mutationFn: (payload) => seguridadService.verificarPunto(payload),
     onSuccess: () => {
-      toast.success(`✅ ${punto.nombre} — verificado`)
+      toast.success(`${punto.nombre} — verificado`)
       setModoVerif(null)
       onVerificado()
     },
@@ -372,8 +372,8 @@ function MapOverlay({ turno, puntos, onClose, onPuntoVerificado }) {
           turno_id: turno.id,
           guardia_id: turno.guardia_id,
           metodo: 'gps',
-          latitud_verificada: pos.lat,
-          longitud_verificada: pos.lng,
+          latitud: pos.lat,
+          longitud: pos.lng,
         })
         onPuntoVerificado(pendiente.id)
         setAutoMessage(`Punto ${pendiente.orden + 1} completado`)
@@ -530,15 +530,22 @@ export default function RondaPage() {
     retry: false,
   })
 
-  useEffect(() => {
-    setPuntos(Array.isArray(turno?.puntos) ? turno.puntos : [])
-  }, [turno])
+useEffect(() => {
+  if (turno?.puntos) {
+    // Solo actualiza si no tienes puntos cargados o si cambió la estructura
+    setPuntos((prev) => (prev.length === 0 ? turno.puntos : prev))
+  }
+}, [turno])
 
-  const onVerificado = useCallback((puntoId) => {
-    setPuntos((prev) => prev.map(p => p.id === puntoId ? { ...p, verificado: true } : p))
-    refetch()
-    qc.invalidateQueries({ queryKey: ['notificaciones-badge'] })
-  }, [qc, refetch])
+ // Modifica la función onVerificado en tu componente RondaPage (Líneas ~335)
+const onVerificado = useCallback((puntoId) => {
+  // 1. Actualizamos el estado local inmediatamente para mantener la UI intacta
+  setPuntos((prev) => prev.map(p => p.id === puntoId ? { ...p, verificado: true } : p))
+  
+  // 2. Invalidamos los datos en React Query para que se actualicen en segundo plano sin romper nada
+  qc.invalidateQueries({ queryKey: ['mi-turno'] })
+  qc.invalidateQueries({ queryKey: ['notificaciones-badge'] })
+}, [qc])
 
   const abrirMapa = () => setMapOpen(true)
 
