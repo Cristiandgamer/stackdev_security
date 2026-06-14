@@ -10,10 +10,19 @@ function RondaEditForm({ ronda, onSave, onCancel, saving }) {
   const [nombre, setNombre] = useState(ronda.nombre || '')
   const [descripcion, setDescripcion] = useState(ronda.descripcion || '')
   const [activa, setActiva] = useState(ronda.activa)
+  // Nuevos estados de configuración de repetición y tiempo
+  const [intervaloMinutos, setIntervaloMinutos] = useState(ronda.intervalo_minutos || 60)
+  const [rondasPorTurno, setRondasPorTurno] = useState(ronda.rondas_por_turno || 1)
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    onSave(ronda.id, { nombre, descripcion, activa })
+    onSave(ronda.id, { 
+      nombre, 
+      descripcion, 
+      activa,
+      intervalo_minutos: parseInt(intervaloMinutos, 10) || 60,
+      rondas_por_turno: parseInt(rondasPorTurno, 10) || 1
+    })
   }
 
   return (
@@ -26,7 +35,34 @@ function RondaEditForm({ ronda, onSave, onCancel, saving }) {
         <label className="label">Descripción</label>
         <textarea className="input-field resize-none" rows={3} value={descripcion} onChange={e => setDescripcion(e.target.value)} />
       </div>
-      <div className="flex items-center gap-3">
+
+      {/* Nuevos inputs para configurar el comportamiento repetitivo */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="label">Reiniciar cada (Minutos)</label>
+          <input 
+            type="number" 
+            min="1"
+            className="input-field" 
+            value={intervaloMinutos} 
+            onChange={e => setIntervaloMinutos(e.target.value)} 
+          />
+          <p className="text-xs text-[#94a3b8] mt-1">Tiempo para liberar los puntos.</p>
+        </div>
+        <div>
+          <label className="label">Rondas por Turno</label>
+          <input 
+            type="number" 
+            min="1"
+            className="input-field" 
+            value={rondasPorTurno} 
+            onChange={e => setRondasPorTurno(e.target.value)} 
+          />
+          <p className="text-xs text-[#94a3b8] mt-1">Cantidad total esperada.</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
         <label className="flex items-center gap-2 text-sm text-[#94a3b8]">
           <input type="checkbox" checked={activa} onChange={e => setActiva(e.target.checked)} className="form-checkbox" />
           Activa
@@ -171,8 +207,10 @@ export default function RondasPage() {
                           <button onClick={() => handleDeleteRound(ronda.id)} className="btn-ghost !py-2 !px-3 text-red-400" title="Inactivar ronda"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
-                      <div className="mt-3 flex items-center gap-3 text-sm text-[#94a3b8]">
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[#94a3b8]">
                         <span className={ronda.activa ? 'badge-green' : 'badge-gray'}>{ronda.activa ? 'Activa' : 'Inactiva'}</span>
+                        <span>Frecuencia: Cada {ronda.intervalo_minutos || 60} min</span>
+                        <span>Límite: {ronda.rondas_por_turno || 1} por turno</span>
                         <span>Creada: {new Date(ronda.created_at).toLocaleDateString('es-CL')}</span>
                       </div>
                     </div>

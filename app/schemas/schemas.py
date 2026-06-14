@@ -199,18 +199,24 @@ class RondaBase(BaseModel):
 
 class RondaCreate(RondaBase):
     instalacion_id: int
+    intervalo_minutos: Optional[int] = 60
+    rondas_por_turno: Optional[int] = 1
 
 
 class RondaUpdate(BaseModel):
     nombre: Optional[str] = None
     descripcion: Optional[str] = None
     activa: Optional[bool] = None
+    intervalo_minutos: Optional[int] = None
+    rondas_por_turno: Optional[int] = None
 
 
 class RondaOut(RondaBase):
     id: int
     instalacion_id: int
     activa: bool
+    intervalo_minutos: int
+    rondas_por_turno: int
     created_at: datetime
 
     model_config = {"from_attributes": True}

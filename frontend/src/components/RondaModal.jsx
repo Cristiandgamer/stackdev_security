@@ -18,6 +18,10 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
   // Vista móvil: 'map' o 'list'
   const [vistaMovil,  setVistaMovil]  = useState('map')
 
+  // Nuevos estados para la configuración de la frecuencia de ronda
+  const [intervaloMinutos, setIntervaloMinutos] = useState('60')
+  const [rondasPorTurno, setRondasPorTurno] = useState('1')
+
   const redibujarMarcadores = useCallback((lista, map) => {
     markerRefs.current.forEach((m) => m.remove())
     markerRefs.current = []
@@ -79,7 +83,6 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
       setPuntos((prev) => {
         const siguiente = [...prev, nuevo]
         redibujarMarcadores(siguiente, map)
-        // Al agregar punto en móvil, mostrar lista
         setVistaMovil('list')
         return siguiente
       })
@@ -109,6 +112,8 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
         instalacion_id: instalacion.id,
         nombre,
         descripcion,
+        intervalo_minutos: parseInt(intervaloMinutos, 10) || 60,
+        rondas_por_turno: parseInt(rondasPorTurno, 10) || 1,
       })
       const ronda = res.data
       for (let i = 0; i < puntos.length; i++) {
@@ -149,7 +154,7 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
         </button>
       </div>
 
-      {/* ── Nombre + descripción ── */}
+      {/* ── Nombre + descripción + Configuración ── */}
       <div className="px-4 pt-3 pb-2 bg-[#0d1a2d] border-b border-[#1e3a5f] flex-shrink-0 space-y-2">
         <input
           className="input-field text-sm"
@@ -163,6 +168,30 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
           value={descripcion}
           onChange={(e) => setDescripcion(e.target.value)}
         />
+
+        {/* Sección de inputs nuevos para configurar tiempos */}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <div>
+            <label className="text-[11px] text-[#94a3b8] block mb-1">Reiniciar cada (minutos)</label>
+            <input
+              type="number"
+              min="1"
+              className="input-field text-sm !py-1.5"
+              value={intervaloMinutos}
+              onChange={(e) => setIntervaloMinutos(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#94a3b8] block mb-1">Rondas por turno</label>
+            <input
+              type="number"
+              min="1"
+              className="input-field text-sm !py-1.5"
+              value={rondasPorTurno}
+              onChange={(e) => setRondasPorTurno(e.target.value)}
+            />
+          </div>
+        </div>
       </div>
 
       {/* ── Tab switcher móvil ── */}
@@ -197,20 +226,15 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
 
       {/* ── Contenido principal ── */}
       <div className="flex-1 overflow-hidden relative">
-
-        {/* Mapa */}
         <div className={`absolute inset-0 ${vistaMovil === 'map' ? 'block' : 'hidden'}`}>
           <div ref={mapContainer} className="w-full h-full" />
-          {/* Instrucción flotante */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-sm text-white text-xs px-4 py-2 rounded-full pointer-events-none whitespace-nowrap">
             Toca el mapa para agregar puntos
           </div>
         </div>
 
-        {/* Lista de puntos */}
         {vistaMovil === 'list' && (
           <div className="h-full overflow-y-auto p-4 space-y-3">
-
             {puntos.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
                 <div className="w-16 h-16 bg-[#1e3a5f]/40 rounded-2xl flex items-center justify-center">
@@ -220,10 +244,7 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
                   Aún no hay puntos.<br />
                   Ve al <span className="text-brand font-medium">mapa</span> y toca para agregar.
                 </p>
-                <button
-                  onClick={() => setVistaMovil('map')}
-                  className="btn-secondary text-sm px-5 py-2"
-                >
+                <button onClick={() => setVistaMovil('map')} className="btn-secondary text-sm px-5 py-2">
                   Ir al mapa
                 </button>
               </div>
@@ -233,10 +254,7 @@ export default function RondaModal({ instalacion, onClose, onCreated }) {
                   {puntos.length} punto{puntos.length > 1 ? 's' : ''} agregado{puntos.length > 1 ? 's' : ''} — toca <span className="text-brand">Mapa</span> para agregar más
                 </p>
                 {puntos.map((p, idx) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-3 bg-[#152032] border border-[#1e3a5f] rounded-2xl px-4 py-3"
-                  >
+                  <div key={p.id} className="flex items-center gap-3 bg-[#152032] border border-[#1e3a5f] rounded-2xl px-4 py-3">
                     <div className="w-9 h-9 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
                       {idx + 1}
                     </div>

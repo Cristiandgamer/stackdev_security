@@ -37,6 +37,8 @@ def ensure_missing_columns():
             ("asistencias",     "minutos_trabajados",  "INT"),
             ("asistencias",     "horas_extra",         "DOUBLE NOT NULL DEFAULT 0"),
             ("asistencias",     "observacion",         "TEXT"),
+            ("rondas",          "intervalo_minutos",   "INT DEFAULT 60"),
+            ("rondas",          "rondas_por_turno",    "INT DEFAULT 1")
         ]
         for table, column, ddl_type in checks:
             result = conn.execute(text(

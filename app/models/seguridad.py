@@ -231,6 +231,8 @@ class Ronda(Base):
     nombre = Column(String(150), nullable=False)
     descripcion = Column(Text)
     activa = Column(Boolean, default=True)
+    intervalo_minutos = Column(Integer, default=60, nullable=False)
+    rondas_por_turno = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     instalacion = relationship("Instalacion", back_populates="rondas")
