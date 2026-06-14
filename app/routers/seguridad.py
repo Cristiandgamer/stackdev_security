@@ -230,28 +230,77 @@ def qr_imagen(punto_id: int, db: Session = Depends(get_db), _=Depends(require_su
 # ── Verificaciones / Rondas ────────────────────────────────────────────────────
 
 @router.post("/verificaciones", response_model=VerificacionOut, status_code=201)
-def crear_verificacion(data: VerificacionCreate, db: Session = Depends(get_db), _=Depends(require_any)):
+def crear_verificacion(
+    data: VerificacionCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_any)
+):
+    """
+    Crea una verificación de punto de control.
+    
+    Métodos aceptados:
+    - gps: requiere latitud_verificada + longitud_verificada
+    - qr: requiere qr_escaneado
+    - ambos: requiere ambos
+    
+    FIX: Si guardia_id no se envía, se infiere del turno.
+    """
+    # 1. Verificar que el punto exista
     punto = db.query(PuntoControl).filter(
         PuntoControl.id == data.punto_control_id,
         PuntoControl.activo == True
     ).first()
     if not punto:
-        raise HTTPException(404, "Punto de control no encontrado")
+        raise HTTPException(404, "Punto de control no encontrado o inactivo")
 
+    # 2. Verificar que el turno exista
+    turno = db.query(Turno).filter(Turno.id == data.turno_id).first()
+    if not turno:
+        raise HTTPException(404, "Turno no encontrado")
+
+    # 3. FIX: Si guardia_id no llega, inferirlo del turno
+    guardia_id = data.guardia_id
+    if not guardia_id:
+        guardia_id = turno.guardia_id
+    if not guardia_id:
+        raise HTTPException(
+            422,
+            "No se pudo determinar el guardia. Envíe guardia_id en el payload."
+        )
+
+    # 4. Validar método y ejecutar verificación
     distancia = None
-    if data.metodo in ("gps", "ambos") and data.latitud_verificada and data.longitud_verificada:
+
+    if data.metodo in ("gps", "ambos"):
+        if not data.latitud_verificada or not data.longitud_verificada:
+            raise HTTPException(
+                422,
+                "Para verificación GPS se requiere latitud_verificada y longitud_verificada"
+            )
         valido, distancia = verificar_gps(punto, data.latitud_verificada, data.longitud_verificada)
         if not valido:
-            raise HTTPException(400, f"Fuera del rango GPS ({distancia:.0f}m del punto, máximo {punto.radio_metros}m)")
+            radio = punto.radio_metros or settings.CHECKPOINT_RADIO_METROS
+            raise HTTPException(
+                400,
+                f"Fuera del rango GPS: estás a {distancia:.0f}m del punto "
+                f"(máximo permitido: {radio}m). "
+                f"Acércate más al punto de control."
+            )
 
-    if data.metodo in ("qr", "ambos") and data.qr_escaneado:
+    if data.metodo in ("qr", "ambos"):
+        if not data.qr_escaneado:
+            raise HTTPException(
+                422,
+                "Para verificación QR se requiere qr_escaneado"
+            )
         if not verificar_qr(punto, data.qr_escaneado):
-            raise HTTPException(400, "Código QR inválido")
+            raise HTTPException(400, "Código QR inválido o expirado")
 
+    # 5. Crear el registro
     verif = VerificacionPunto(
         punto_control_id=data.punto_control_id,
         turno_id=data.turno_id,
-        guardia_id=data.guardia_id,
+        guardia_id=guardia_id,
         metodo=data.metodo,
         latitud_verificada=data.latitud_verificada,
         longitud_verificada=data.longitud_verificada,
