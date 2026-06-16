@@ -141,6 +141,37 @@ export const seguridadService = {
   estadisticas: () => api.get("/estadisticas/dashboard"),
 };
 
+// ══════════════════════════════════════════════════════════════════════════
+// RONDAS — sistema reconstruido (puntos desde mapa, ciclo de rondas/turno)
+// ══════════════════════════════════════════════════════════════════════════
+export const rondasService = {
+  // Guardia
+  turnoActivo: () => api.get("/rondas/turno-activo"),
+  iniciarRonda: () => api.post("/rondas/iniciar"),
+  verificarPunto: (d) => api.post("/rondas/verificar-punto", d),
+
+  // Supervisor / Admin
+  resumenTurno: (turnoId) => api.get(`/rondas/resumen/${turnoId}`),
+
+  // Plantillas de ronda
+  listarPlantillas: (instId) => api.get(`/rondas/plantillas/${instId}`),
+  crearPlantilla: (d) => api.post("/rondas/plantillas", d),
+  actualizarPlantilla: (id, d) => api.put(`/rondas/plantillas/${id}`, d),
+  eliminarPlantilla: (id) => api.delete(`/rondas/plantillas/${id}`),
+
+  // Puntos de control (coordenadas definidas en el mapa por el admin)
+  listarPuntos: (instId, rondaId) =>
+    api.get(`/rondas/puntos/${instId}`, {
+      params: rondaId ? { ronda_id: rondaId } : {},
+    }),
+  crearPunto: (d) => api.post("/rondas/puntos", d),
+  actualizarPunto: (id, d) => api.put(`/rondas/puntos/${id}`, d),
+  eliminarPunto: (id) => api.delete(`/rondas/puntos/${id}`),
+  regenerarQR: (id) => api.post(`/rondas/puntos/${id}/qr`),
+  obtenerQRImagen: (id) =>
+    api.get(`/rondas/puntos/${id}/qr-imagen`, { responseType: "blob" }),
+};
+
 export const asistenciaService = {
   obtenerConfig: () => api.get("/asistencia/config"),
   actualizarConfig: (d) => api.put("/asistencia/config", d),

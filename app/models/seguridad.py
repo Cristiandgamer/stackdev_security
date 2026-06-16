@@ -1,12 +1,11 @@
 import json
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime,
-    Float, Text, ForeignKey, Enum, Index
+    Float, Text, ForeignKey, Index
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
-import enum
 
 
 class Instalacion(Base):
@@ -14,9 +13,15 @@ class Instalacion(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(150), nullable=False)
+    descripcion = Column(Text)
     direccion = Column(String(255))
+    ciudad = Column(String(100))
+    telefono = Column(String(30))
+    tipo = Column(String(30))
     latitud = Column(Float)
     longitud = Column(Float)
+    # Radio GPS global para esta instalación (metros)
+    radio_gps_metros = Column(Integer, default=15)
     activa = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -25,7 +30,40 @@ class Instalacion(Base):
     rondas = relationship("Ronda", back_populates="instalacion")
 
 
+class Ronda(Base):
+    """
+    Plantilla de ronda: define qué puntos recorrer,
+    cuántas veces por turno y cuánto descanso entre rondas.
+    """
+    __tablename__ = "rondas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
+    nombre = Column(String(150), nullable=False)
+    descripcion = Column(Text)
+    activa = Column(Boolean, default=True)
+    # Cuántas rondas completas debe hacer el guardia en un turno
+    rondas_por_turno = Column(Integer, default=1, nullable=False)
+    # Minutos de descanso DESPUÉS de completar una ronda antes de iniciar la siguiente
+    descanso_entre_rondas_min = Column(Integer, default=60, nullable=False)
+    # Minutos máximos para completar una ronda (0 = sin límite)
+    tiempo_maximo_ronda_min = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    instalacion = relationship("Instalacion", back_populates="rondas")
+    puntos = relationship(
+        "PuntoControl",
+        back_populates="ronda",
+        order_by="PuntoControl.orden"
+    )
+    ejecuciones = relationship("RondaEjecucion", back_populates="ronda")
+
+
 class PuntoControl(Base):
+    """
+    Punto físico en el mapa. Las coordenadas son donde el admin
+    hizo clic en el mapa (NO donde está el dispositivo).
+    """
     __tablename__ = "puntos_control"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -33,9 +71,10 @@ class PuntoControl(Base):
     ronda_id = Column(Integer, ForeignKey("rondas.id"), nullable=True, index=True)
     nombre = Column(String(150), nullable=False)
     descripcion = Column(Text)
+    # Coordenadas del punto físico (definidas por el admin en el mapa)
     latitud = Column(Float, nullable=False)
     longitud = Column(Float, nullable=False)
-    radio_metros = Column(Integer, default=50)
+    # QR token para verificación alternativa
     qr_token = Column(String(64), unique=True, index=True)
     activo = Column(Boolean, default=True)
     orden = Column(Integer, default=0)
@@ -46,17 +85,60 @@ class PuntoControl(Base):
     verificaciones = relationship("VerificacionPunto", back_populates="punto_control")
 
 
+class RondaEjecucion(Base):
+    """
+    Registro de cada ejecución de ronda durante un turno.
+    Una ronda con rondas_por_turno=3 generará 3 RondaEjecucion por turno.
+    """
+    __tablename__ = "ronda_ejecuciones"
+    __table_args__ = (
+        Index("ix_ronda_ejecuciones_turno_numero", "turno_id", "numero_ronda"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
+    ronda_id = Column(Integer, ForeignKey("rondas.id"), nullable=False, index=True)
+    guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
+    # Número de ronda dentro del turno (1, 2, 3...)
+    numero_ronda = Column(Integer, nullable=False)
+    # Estados: pendiente | en_progreso | completada | incompleta
+    estado = Column(String(20), default="pendiente", nullable=False)
+    # Cuándo el guardia inició esta ronda
+    iniciada_en = Column(DateTime(timezone=True))
+    # Cuándo se completaron todos los puntos
+    completada_en = Column(DateTime(timezone=True))
+    # Cuándo se puede iniciar la siguiente ronda (completada_en + descanso)
+    proxima_ronda_disponible = Column(DateTime(timezone=True))
+    # Minutos que tardó en completar (null si incompleta)
+    minutos_duracion = Column(Integer)
+    # Puntos completados / puntos totales al momento de cierre
+    puntos_completados = Column(Integer, default=0)
+    puntos_total = Column(Integer, default=0)
+    # Notas del sistema (ej: "marcada automáticamente como incompleta")
+    notas_sistema = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    turno = relationship("Turno")
+    ronda = relationship("Ronda", back_populates="ejecuciones")
+    guardia = relationship("Guardia")
+    verificaciones = relationship("VerificacionPunto", back_populates="ejecucion")
+
+
 class VerificacionPunto(Base):
     __tablename__ = "verificaciones_punto"
     __table_args__ = (
         Index("ix_verificaciones_turno_guardia", "turno_id", "guardia_id"),
+        Index("ix_verificaciones_ejecucion", "ejecucion_id"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     punto_control_id = Column(Integer, ForeignKey("puntos_control.id"), nullable=False, index=True)
     turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
     guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
-    metodo = Column(String(10))  # gps | qr | ambos
+    # Referencia a la ejecución de ronda específica
+    ejecucion_id = Column(Integer, ForeignKey("ronda_ejecuciones.id"), nullable=True, index=True)
+    # gps | qr | ambos
+    metodo = Column(String(10))
     latitud_verificada = Column(Float)
     longitud_verificada = Column(Float)
     distancia_metros = Column(Float)
@@ -67,6 +149,7 @@ class VerificacionPunto(Base):
     punto_control = relationship("PuntoControl", back_populates="verificaciones")
     turno = relationship("Turno")
     guardia = relationship("Guardia")
+    ejecucion = relationship("RondaEjecucion", back_populates="verificaciones")
 
 
 class Guardia(Base):
@@ -80,7 +163,7 @@ class Guardia(Base):
     apellido = Column(String(100), nullable=False)
     telefono = Column(String(20))
     email = Column(String(150))
-    certificaciones = Column(Text)  # JSON string
+    certificaciones = Column(Text)
     activo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -100,6 +183,7 @@ class Turno(Base):
     id = Column(Integer, primary_key=True, index=True)
     guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
     instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False, index=True)
+    ronda_id = Column(Integer, ForeignKey("rondas.id"), nullable=True, index=True)
     fecha_inicio = Column(DateTime(timezone=True), nullable=False, index=True)
     fecha_fin = Column(DateTime(timezone=True), nullable=False, index=True)
     _dias_semana = Column("dias_semana", Text, nullable=True)
@@ -122,12 +206,15 @@ class Turno(Base):
         else:
             self._dias_semana = json.dumps(value)
 
-    estado = Column(String(20), default="programado")  # programado|en_curso|finalizado|ausente
+    # programado | asignado | en_curso | finalizado | ausente
+    estado = Column(String(20), default="programado")
+    tipo = Column(String(20), default="diurno")
     notas = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     guardia = relationship("Guardia", back_populates="turnos")
     instalacion = relationship("Instalacion", back_populates="turnos")
+    ronda = relationship("Ronda")
     asistencia = relationship("Asistencia", back_populates="turno", uselist=False)
 
 
@@ -140,28 +227,23 @@ class Asistencia(Base):
     id = Column(Integer, primary_key=True, index=True)
     turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=False, index=True)
     guardia_id = Column(Integer, ForeignKey("guardias.id"), nullable=False, index=True)
-    
-    # Entrada
+
     entrada = Column(DateTime(timezone=True))
     latitud_entrada = Column(Float)
     longitud_entrada = Column(Float)
     distancia_entrada = Column(Float)
     foto_entrada = Column(String(500))
-    
-    # Salida
+
     salida = Column(DateTime(timezone=True))
     latitud_salida = Column(Float)
     longitud_salida = Column(Float)
     distancia_salida = Column(Float)
     foto_salida = Column(String(500))
-    
-    # Estado y cálculos
-    estado = Column(String(20), default="sin_marcar")  # ← IMPORTANTE
-    minutos_retraso = Column(Integer, default=0)      # ← IMPORTANTE
-    minutos_trabajados = Column(Integer)              # ← IMPORTANTE
-    horas_extra = Column(Float, default=0.0)          # ← IMPORTANTE
-    
-    # Observaciones
+
+    estado = Column(String(20), default="sin_marcar")
+    minutos_retraso = Column(Integer, default=0)
+    minutos_trabajados = Column(Integer)
+    horas_extra = Column(Float, default=0.0)
     observacion = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -178,8 +260,8 @@ class Incidente(Base):
     turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=True, index=True)
     titulo = Column(String(200), nullable=False)
     descripcion = Column(Text)
-    severidad = Column(String(10), default="media")  # baja|media|alta|critica
-    estado = Column(String(20), default="abierto")   # abierto|en_proceso|resuelto|cerrado
+    severidad = Column(String(10), default="media")
+    estado = Column(String(20), default="abierto")
     latitud = Column(Float)
     longitud = Column(Float)
     reportado_en = Column(DateTime(timezone=True), server_default=func.now())
@@ -215,25 +297,9 @@ class Notificacion(Base):
     titulo = Column(String(200), nullable=False)
     mensaje = Column(Text)
     leida = Column(Boolean, default=False)
-    tipo = Column(String(30), default="info")  # info|alerta|incidente
+    tipo = Column(String(30), default="info")
     referencia_id = Column(Integer)
     referencia_tipo = Column(String(30))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     usuario = relationship("Usuario")
-
-
-class Ronda(Base):
-    __tablename__ = "rondas"
-
-    id = Column(Integer, primary_key=True, index=True)
-    instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False)
-    nombre = Column(String(150), nullable=False)
-    descripcion = Column(Text)
-    activa = Column(Boolean, default=True)
-    intervalo_minutos = Column(Integer, default=60, nullable=False)
-    rondas_por_turno = Column(Integer, default=1, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    instalacion = relationship("Instalacion", back_populates="rondas")
-    puntos = relationship("PuntoControl", back_populates="ronda")

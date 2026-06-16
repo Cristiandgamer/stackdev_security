@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.routers import auth, usuarios, seguridad, asistencia
+from app.routers import auth, usuarios, seguridad, asistencia, rondas
 
 
 def ensure_missing_columns():
@@ -26,6 +26,8 @@ def ensure_missing_columns():
             ("guardias",        "instalacion_id",      "INT"),
             ("puntos_control",  "ronda_id",            "INT"),
             ("turnos",          "dias_semana",         "TEXT"),
+            ("turnos",          "ronda_id",            "INT"),
+            ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
             ("asistencias",     "latitud_salida",      "DOUBLE"),
             ("asistencias",     "longitud_salida",     "DOUBLE"),
             ("asistencias",     "distancia_entrada",   "DOUBLE"),
@@ -37,8 +39,16 @@ def ensure_missing_columns():
             ("asistencias",     "minutos_trabajados",  "INT"),
             ("asistencias",     "horas_extra",         "DOUBLE NOT NULL DEFAULT 0"),
             ("asistencias",     "observacion",         "TEXT"),
-            ("rondas",          "intervalo_minutos",   "INT DEFAULT 60"),
-            ("rondas",          "rondas_por_turno",    "INT DEFAULT 1")
+            # ── Sistema de rondas reconstruido ──────────────────────────────
+            ("instalaciones",   "radio_gps_metros",    "INT DEFAULT 15"),
+            ("instalaciones",   "descripcion",         "TEXT"),
+            ("instalaciones",   "ciudad",              "VARCHAR(100)"),
+            ("instalaciones",   "telefono",            "VARCHAR(30)"),
+            ("instalaciones",   "tipo",                "VARCHAR(30)"),
+            ("rondas",          "rondas_por_turno",    "INT DEFAULT 1 NOT NULL"),
+            ("rondas",          "descanso_entre_rondas_min", "INT DEFAULT 60 NOT NULL"),
+            ("rondas",          "tiempo_maximo_ronda_min",   "INT DEFAULT 0 NOT NULL"),
+            ("verificaciones_punto", "ejecucion_id",   "INT"),
         ]
         for table, column, ddl_type in checks:
             result = conn.execute(text(
@@ -55,6 +65,37 @@ def ensure_missing_columns():
                     f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type_sql}"
                 ))
         conn.commit()
+
+
+def crear_tabla_ronda_ejecuciones():
+    """Crea la tabla ronda_ejecuciones si no existe (migración idempotente)."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ronda_ejecuciones (
+                    id                       INT AUTO_INCREMENT PRIMARY KEY,
+                    turno_id                 INT NOT NULL,
+                    ronda_id                 INT NOT NULL,
+                    guardia_id               INT NOT NULL,
+                    numero_ronda             INT NOT NULL,
+                    estado                   VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+                    iniciada_en              DATETIME NULL,
+                    completada_en            DATETIME NULL,
+                    proxima_ronda_disponible DATETIME NULL,
+                    minutos_duracion         INT NULL,
+                    puntos_completados       INT NOT NULL DEFAULT 0,
+                    puntos_total             INT NOT NULL DEFAULT 0,
+                    notas_sistema            TEXT NULL,
+                    created_at               DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX ix_ronda_ejecuciones_turno_numero (turno_id, numero_ronda),
+                    INDEX ix_re_ronda_id (ronda_id),
+                    INDEX ix_re_guardia_id (guardia_id)
+                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+            """))
+            conn.commit()
+            logger.info("✓ Tabla ronda_ejecuciones verificada/creada")
+    except Exception as e:
+        logger.warning(f"No se pudo crear ronda_ejecuciones: {e}")
 
 
 def seed_config_asistencia():
@@ -86,6 +127,7 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)
         ensure_missing_columns()
+        crear_tabla_ronda_ejecuciones()
         seed_config_asistencia()
         logger.info("✓ Tablas verificadas/creadas")
     except Exception as e:
@@ -99,7 +141,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Stack Dev Security API",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
     docs_url="/api/docs" if os.getenv("ENVIRONMENT") != "production" else None,
     redoc_url=None,
@@ -151,6 +193,7 @@ app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
 app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])
 app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistencia"])
+app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")
@@ -162,7 +205,6 @@ if os.path.exists(settings.UPLOAD_DIR):
     app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 # ── Frontend SPA ──────────────────────────────────────────────────────────────
-# El Dockerfile copia el dist en /app/frontend/dist
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "frontend", "dist",
@@ -171,29 +213,18 @@ FRONTEND_DIST = os.path.join(
 if os.path.exists(FRONTEND_DIST):
     logger.info(f"✓ Frontend encontrado en {FRONTEND_DIST}")
 
-    # Montar assets con hash (JS, CSS generados por Vite)
     assets_dir = os.path.join(FRONTEND_DIST, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    # SPA fallback — esta ruta se registra AL FINAL, después de los routers.
-    # FastAPI/Starlette resuelve rutas en orden de registro y da prioridad
-    # a las rutas más específicas de los routers /api/* sobre este catch-all.
-    # Si una request no matchea ningún router (ej: /asistencias, /login,
-    # /turnos), cae aquí y se sirve index.html para que React Router
-    # maneje la navegación del lado del cliente.
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         clean = full_path.lstrip("/")
 
-        # ── Protección Path Traversal (OWASP A01/A05) ──────────────
-        # Resuelve la ruta absoluta y verifica que siga dentro de FRONTEND_DIST.
-        # Bloquea intentos como /../../etc/passwd, /..%2f.., rutas con \0, etc.
         if clean:
             requested_path = os.path.abspath(os.path.join(FRONTEND_DIST, clean))
             frontend_root = os.path.abspath(FRONTEND_DIST)
             if not requested_path.startswith(frontend_root + os.sep):
-                # Intento de escapar del directorio del frontend
                 if clean.startswith("api") or clean.startswith("uploads"):
                     return JSONResponse({"detail": "Not Found"}, status_code=404)
                 return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
@@ -201,12 +232,9 @@ if os.path.exists(FRONTEND_DIST):
             if os.path.isfile(requested_path):
                 return FileResponse(requested_path)
 
-        # Cualquier ruta de API que llegue hasta aquí significa que no
-        # matcheó ningún router → 404 JSON real, nunca HTML
         if clean.startswith("api") or clean.startswith("uploads"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
 
-        # Rutas del SPA (/asistencias, /turnos, /login, etc.) → index.html
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
 
 else:
