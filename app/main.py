@@ -25,6 +25,7 @@ def ensure_missing_columns():
             ("usuarios",        "username",            "VARCHAR(80)"),
             ("guardias",        "instalacion_id",      "INT"),
             ("puntos_control",  "ronda_id",            "INT"),
+            ("puntos_control",  "radio_metros",        "INT DEFAULT 50"),  # ← AGREGADO
             ("turnos",          "dias_semana",         "TEXT"),
             ("turnos",          "ronda_id",            "INT"),
             ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
@@ -189,11 +190,11 @@ app.add_middleware(
 )
 
 # ── API Routers ───────────────────────────────────────────────────────────────
-# IMPORTANTE: rondas.router debe ir ANTES que seguridad.router.
-# seguridad.router define /rondas/{ronda_id} (con parámetro entero),
-# y FastAPI evalúa rutas en orden de registro. Si seguridad va primero,
-# la ruta /api/rondas/turno-activo es capturada por /rondas/{ronda_id}
-# antes de llegar al endpoint correcto, causando error 422.
+# IMPORTANTE: rondas.router ANTES que seguridad.router.
+# seguridad.router define /rondas/{ronda_id} con parámetro entero.
+# Si va primero, captura /api/rondas/turno-activo → 422.
+# Igual: rondas.router define /resumen/{turno_id}; si seguridad va primero,
+# capturaría /api/rondas/resumen/{id} como /rondas/{ronda_id}.
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
 app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])      # ← PRIMERO

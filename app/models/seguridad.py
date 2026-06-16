@@ -58,6 +58,15 @@ class Ronda(Base):
     )
     ejecuciones = relationship("RondaEjecucion", back_populates="ronda")
 
+    @property
+    def intervalo_minutos(self):
+        """
+        Alias de compatibilidad hacia atrás.
+        schemas.py usa intervalo_minutos en RondaOut; el campo real
+        en la BD es descanso_entre_rondas_min.
+        """
+        return self.descanso_entre_rondas_min
+
 
 class PuntoControl(Base):
     """
@@ -74,6 +83,8 @@ class PuntoControl(Base):
     # Coordenadas del punto físico (definidas por el admin en el mapa)
     latitud = Column(Float, nullable=False)
     longitud = Column(Float, nullable=False)
+    # Radio de validación GPS para este punto específico (metros)
+    radio_metros = Column(Integer, default=50)
     # QR token para verificación alternativa
     qr_token = Column(String(64), unique=True, index=True)
     activo = Column(Boolean, default=True)
