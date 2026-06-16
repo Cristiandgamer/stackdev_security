@@ -188,12 +188,17 @@ app.add_middleware(
     allow_headers=settings.ALLOWED_HEADERS,
 )
 
-# ── API Routers — registrar ANTES del mount de archivos estáticos ─────────────
+# ── API Routers ───────────────────────────────────────────────────────────────
+# IMPORTANTE: rondas.router debe ir ANTES que seguridad.router.
+# seguridad.router define /rondas/{ronda_id} (con parámetro entero),
+# y FastAPI evalúa rutas en orden de registro. Si seguridad va primero,
+# la ruta /api/rondas/turno-activo es capturada por /rondas/{ronda_id}
+# antes de llegar al endpoint correcto, causando error 422.
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
-app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])
+app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])      # ← PRIMERO
+app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])   # ← DESPUÉS
 app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistencia"])
-app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")
