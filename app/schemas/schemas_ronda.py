@@ -176,17 +176,17 @@ class PuntoConEstadoOut(PuntoControlOut):
 class EjecucionActivaOut(BaseModel):
     """Estado completo de la ronda activa para el guardia."""
     ejecucion_id: Optional[int] = None
-    numero_ronda: int
-    estado: str  # pendiente | en_progreso | completada | incompleta
+    numero_ronda: int = 1
+    estado: str = "pendiente"  # pendiente | en_progreso | completada | incompleta
     iniciada_en: Optional[datetime] = None
     proxima_ronda_disponible: Optional[datetime] = None
-    puntos_completados: int
-    puntos_total: int
+    puntos_completados: int = 0
+    puntos_total: int = 0
     puntos: List[PuntoConEstadoOut] = []
     # Info de progreso total del turno
-    rondas_completadas_turno: int
-    rondas_por_turno: int
-    descanso_entre_rondas_min: int
+    rondas_completadas_turno: int = 0
+    rondas_por_turno: int = 1
+    descanso_entre_rondas_min: int = 0
     # Próxima ronda en segundos (positivo = tiempo restante, negativo = ya disponible)
     segundos_para_proxima: Optional[int] = None
     model_config = {"from_attributes": True}

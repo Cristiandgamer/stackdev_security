@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime, timedelta
+from pydantic import ValidationError
 import io, logging
 
 from app.core.database import get_db
@@ -217,9 +218,13 @@ def turno_activo(
 ):
     """Retorna el turno activo del guardia con el estado de su ronda actual."""
     guardia = _get_guardia_o_404(db, current_user.id)
+
+    # _get_turno_activo lanza HTTPException(404) si no hay turno activo;
+    # debe llamarse ANTES de cualquier construcción de respuesta para que
+    # el 404 se propague correctamente en lugar de derivar en un 422.
     turno = _get_turno_activo(db, guardia.id)
 
-    # Cargar relaciones
+    # Recargar con relaciones necesarias para construir la respuesta
     turno = (
         db.query(Turno)
         .options(
@@ -230,7 +235,24 @@ def turno_activo(
         .first()
     )
 
-    return _build_turno_activo_out(db, turno, guardia.id)
+    # Guardia contra condición de carrera: el turno desapareció entre consultas
+    if turno is None:
+        logger.warning(
+            f"Turno desapareció entre consultas para guardia_id={guardia.id}"
+        )
+        raise HTTPException(404, "No hay turno activo en este momento")
+
+    try:
+        return _build_turno_activo_out(db, turno, guardia.id)
+    except ValidationError as exc:
+        logger.error(
+            f"Error de validación Pydantic al construir TurnoActivoOut "
+            f"para turno_id={turno.id}, guardia_id={guardia.id}: {exc}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Error interno al construir la respuesta del turno activo",
+        ) from exc
 
 
 @router.post("/iniciar", response_model=EjecucionActivaOut)
