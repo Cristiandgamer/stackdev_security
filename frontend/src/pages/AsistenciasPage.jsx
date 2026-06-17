@@ -1,15 +1,19 @@
 /**
- * AsistenciasPage.jsx — CORREGIDO
- * Fix: TypeError: d?.map is not a function
+ * AsistenciasPage.jsx
  *
- * Causa raíz: los queryFn de HistorialGuardia y HistorialAdmin no
- * normalizaban la respuesta a array antes de devolverla.
- * La API puede retornar:
- *   - Un array directo          → r.data = [...]
- *   - Un objeto paginado        → r.data = { items: [...], total: N }
- *   - null / undefined          → error de red o 404
+ * Fix histórico: TypeError: d?.map is not a function
+ *   → helper toArray() normaliza siempre a [] (se mantiene).
  *
- * Solución: helper toArray() que normaliza siempre a [].
+ * Fix actual: el botón "Usar esta foto" no avanzaba al confirmar la selfie
+ * de entrada/salida.
+ *   Causa raíz: confirmar() convertía la captura a Blob usando
+ *   fetch(dataURL).then(r => r.blob()), sin manejo de error. En algunos
+ *   navegadores/WebViews (y en modo incógnito) ese fetch sobre una data: URL
+ *   puede fallar o no resolver nunca, dejando la pantalla congelada con la
+ *   foto capturada y sin ningún mensaje de error.
+ *   Solución: usar canvas.toBlob() directamente (nativo, sin red, con
+ *   callback de error real) + estado "confirmando" para dar feedback
+ *   inmediato al tocar el botón y evitar doble-tap.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -27,17 +31,9 @@ import { Modal, Spinner, EmptyState } from '../components/index.jsx'
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx'
 
 // ══════════════════════════════════════════════════════════════════════════════
-// HELPER — normaliza cualquier respuesta a array (FIX PRINCIPAL)
+// HELPER — normaliza cualquier respuesta a array
 // ══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Convierte la respuesta de la API a un array seguro.
- * Soporta:
- *   - Array directo:           [...]
- *   - Objeto paginado:         { items: [...] }
- *   - Objeto con data:         { data: [...] }
- *   - null / undefined / otro: []
- */
 function toArray(value) {
   if (Array.isArray(value)) return value
   if (value && Array.isArray(value.items)) return value.items
@@ -134,12 +130,16 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
   const videoRef    = useRef(null)
   const canvasRef   = useRef(null)
   const streamRef   = useRef(null)
-  const [listo, setListo]           = useState(false)
-  const [capturada, setCapturada]   = useState(null)
-  const [faceApi, setFaceApi]       = useState(null)
-  const [detectando, setDetectando] = useState(false)
-  const [faceOk, setFaceOk]         = useState(null)
-  const [errorCam, setErrorCam]     = useState(null)
+  const [listo, setListo]             = useState(false)
+  const [capturada, setCapturada]     = useState(null)
+  const [faceApi, setFaceApi]         = useState(null)
+  const [detectando, setDetectando]   = useState(false)
+  const [faceOk, setFaceOk]           = useState(null)
+  const [errorCam, setErrorCam]       = useState(null)
+  // Estado de procesamiento del blob al confirmar la foto.
+  // Da feedback visual inmediato al tocar "Usar esta foto" en móviles
+  // y evita doble-tap mientras se genera el archivo.
+  const [confirmando, setConfirmando] = useState(false)
 
   useEffect(() => {
     if (!reconocimientoFacial) return
@@ -188,16 +188,44 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
 
   const confirmar = () => {
     if (!capturada) return
+    if (confirmando) return // evita doble-tap mientras se procesa
     if (reconocimientoFacial && faceApi && faceOk === false) {
       toast.error('Se requiere un rostro visible para confirmar.')
       return
     }
-    fetch(capturada)
-      .then((r) => r.blob())
-      .then((blob) => {
-        const file = new File([blob], `selfie_${Date.now()}.jpg`, { type: 'image/jpeg' })
-        onFoto(file, capturada)
-      })
+
+    const canvas = canvasRef.current
+    if (!canvas) {
+      toast.error('No se pudo procesar la foto. Intente capturar de nuevo.')
+      return
+    }
+
+    setConfirmando(true)
+
+    // FIX: canvas.toBlob() en vez de fetch(dataURL).then(r => r.blob()).
+    // El fetch sobre una data: URL puede fallar o quedar pendiente para
+    // siempre en algunos navegadores/WebViews sin lanzar ningún error
+    // visible, dejando al usuario viendo la foto capturada sin poder
+    // avanzar. toBlob() es una API nativa del canvas, no usa red y
+    // permite manejar el caso de fallo explícitamente.
+    try {
+      canvas.toBlob(
+        (blob) => {
+          setConfirmando(false)
+          if (!blob) {
+            toast.error('No se pudo generar la foto. Intente capturar nuevamente.')
+            return
+          }
+          const file = new File([blob], `selfie_${Date.now()}.jpg`, { type: 'image/jpeg' })
+          onFoto(file, capturada)
+        },
+        'image/jpeg',
+        0.85
+      )
+    } catch (e) {
+      setConfirmando(false)
+      toast.error('Ocurrió un error al procesar la foto. Intente de nuevo.')
+    }
   }
 
   if (errorCam) {
@@ -269,13 +297,24 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
             )}
           </div>
           <div className="flex gap-3">
-            <button onClick={() => { setCapturada(null); setFaceOk(null) }} className="btn-secondary flex-1">Repetir</button>
+            <button
+              onClick={() => { setCapturada(null); setFaceOk(null) }}
+              disabled={confirmando}
+              className="btn-secondary flex-1 disabled:opacity-50"
+            >
+              Repetir
+            </button>
             <button
               onClick={confirmar}
-              disabled={detectando || (reconocimientoFacial && faceApi && faceOk === false)}
+              disabled={detectando || confirmando || (reconocimientoFacial && faceApi && faceOk === false)}
               className="btn-primary flex-1"
+              aria-busy={confirmando}
             >
-              <CheckCircle2 className="w-5 h-5" /> Usar esta foto
+              {confirmando ? (
+                <><Spinner className="w-5 h-5" /> Procesando…</>
+              ) : (
+                <><CheckCircle2 className="w-5 h-5" /> Usar esta foto</>
+              )}
             </button>
           </div>
         </>
@@ -1115,7 +1154,6 @@ export default function AsistenciasPage() {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENTE: Historial del guardia
-// FIX: queryFn normaliza la respuesta con toArray()
 // ══════════════════════════════════════════════════════════════════════════════
 
 function HistorialGuardia() {
@@ -1124,13 +1162,11 @@ function HistorialGuardia() {
     queryFn: async () => {
       try {
         const r = await asistenciaService.miHistorial({ limit: 10 })
-        // FIX: toArray() evita el "d?.map is not a function"
         return toArray(r?.data)
       } catch {
         return []
       }
     },
-    // initialData garantiza que data siempre sea array incluso antes del fetch
     initialData: [],
   })
 
@@ -1164,7 +1200,6 @@ function HistorialGuardia() {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENTE: Historial admin
-// FIX: queryFn normaliza la respuesta con toArray()
 // ══════════════════════════════════════════════════════════════════════════════
 
 function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
@@ -1185,13 +1220,11 @@ function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
           instalacion_id: filtros.instalacion_id || undefined,
           estado:         filtros.estado         || undefined,
         })
-        // FIX: toArray() evita el "d?.map is not a function"
         return toArray(r?.data)
       } catch {
         return []
       }
     },
-    // initialData garantiza array aunque el fetch falle
     initialData: [],
     staleTime: 20_000,
   })
