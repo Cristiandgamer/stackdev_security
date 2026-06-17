@@ -25,7 +25,7 @@ def ensure_missing_columns():
             ("usuarios",        "username",            "VARCHAR(80)"),
             ("guardias",        "instalacion_id",      "INT"),
             ("puntos_control",  "ronda_id",            "INT"),
-            ("puntos_control",  "radio_metros",        "INT DEFAULT 50"),  # ← AGREGADO
+            ("puntos_control",  "radio_metros",        "INT DEFAULT 50"),
             ("turnos",          "dias_semana",         "TEXT"),
             ("turnos",          "ronda_id",            "INT"),
             ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
@@ -66,6 +66,40 @@ def ensure_missing_columns():
                     f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type_sql}"
                 ))
         conn.commit()
+
+
+def fill_null_defaults():
+    """
+    Rellena columnas que quedaron con NULL tras un ALTER TABLE ADD COLUMN.
+    MySQL no aplica el DEFAULT a filas existentes cuando la columna es nullable,
+    por eso este paso corre en cada arranque y es idempotente (no toca filas ya con valor).
+    """
+    updates = [
+        ("puntos_control", "radio_metros",            50),
+        ("instalaciones",  "radio_gps_metros",        15),
+        ("rondas",         "rondas_por_turno",         1),
+        ("rondas",         "descanso_entre_rondas_min", 60),
+        ("rondas",         "tiempo_maximo_ronda_min",   0),
+        ("asistencias",    "minutos_retraso",           0),
+        ("asistencias",    "horas_extra",               0),
+    ]
+    try:
+        with engine.connect() as conn:
+            for table, column, default_value in updates:
+                # Verificar que la columna existe antes de actualizar
+                exists = conn.execute(text(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() "
+                    "AND table_name = :table AND column_name = :column"
+                ), {"table": table, "column": column}).scalar_one()
+                if exists:
+                    conn.execute(text(
+                        f"UPDATE {table} SET {column} = :val WHERE {column} IS NULL"
+                    ), {"val": default_value})
+            conn.commit()
+            logger.info("✓ Valores NULL corregidos con defaults")
+    except Exception as e:
+        logger.warning(f"No se pudieron corregir NULLs: {e}")
 
 
 def crear_tabla_ronda_ejecuciones():
@@ -128,6 +162,7 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)
         ensure_missing_columns()
+        fill_null_defaults()          # ← NUEVO: corrige NULLs en filas antiguas
         crear_tabla_ronda_ejecuciones()
         seed_config_asistencia()
         logger.info("✓ Tablas verificadas/creadas")
@@ -190,15 +225,12 @@ app.add_middleware(
 )
 
 # ── API Routers ───────────────────────────────────────────────────────────────
-# IMPORTANTE: rondas.router ANTES que seguridad.router.
-# seguridad.router define /rondas/{ronda_id} con parámetro entero.
-# Si va primero, captura /api/rondas/turno-activo → 422.
-# Igual: rondas.router define /resumen/{turno_id}; si seguridad va primero,
-# capturaría /api/rondas/resumen/{id} como /rondas/{ronda_id}.
+# rondas.router ANTES que seguridad.router para evitar que
+# /api/rondas/{ronda_id} capture rutas como /api/rondas/turno-activo
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
-app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])      # ← PRIMERO
-app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])   # ← DESPUÉS
+app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])
+app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])
 app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistencia"])
 
 # ── Health check ──────────────────────────────────────────────────────────────

@@ -159,7 +159,9 @@ class PuntoControlBase(BaseModel):
     descripcion: Optional[str] = None
     latitud: float
     longitud: float
-    radio_metros: int = 50
+    # Optional para tolerar filas antiguas en BD que tienen NULL
+    # tras la migración ALTER TABLE ADD COLUMN
+    radio_metros: Optional[int] = 50
     orden: int = 0
 
 
@@ -352,9 +354,7 @@ class IncidenteOut(IncidenteBase):
     estado: str
     reportado_en: datetime
     resuelto_en: Optional[datetime] = None
-    # Relación cargada por SQLAlchemy — None si no está disponible
     instalacion: Optional[InstalacionOut] = None
-    # Lista de archivos adjuntos — vacía si no se han subido archivos
     archivos: List[ArchivoIncidenteOut] = []
 
     model_config = {"from_attributes": True}
