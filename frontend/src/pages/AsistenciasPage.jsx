@@ -166,6 +166,21 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
     return () => { streamRef.current?.getTracks().forEach((t) => t.stop()) }
   }, [])
 
+  // FIX "Repetir" → pantalla negra:
+  // El <video> vive dentro de la rama "!capturada" del JSX, así que cada
+  // vez que se captura una foto y luego se toca "Repetir", el elemento
+  // <video> se desmonta y se vuelve a montar como un nodo DOM nuevo,
+  // perdiendo el srcObject. El useEffect de arriba solo corre una vez
+  // (deps []), así que nadie reasignaba el stream al nuevo nodo.
+  // Este efecto reconecta el stream ya abierto cada vez que volvemos a
+  // mostrar el video en vivo, sin pedir permiso de cámara de nuevo.
+  useEffect(() => {
+    if (!capturada && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.play().catch(() => {})
+    }
+  }, [capturada])
+
   const capturar = async () => {
     if (!videoRef.current || !canvasRef.current) return
     const v = videoRef.current
@@ -244,6 +259,13 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
 
   return (
     <div className="space-y-4">
+      {/* El canvas vive SIEMPRE montado, independientemente de si se está
+          mostrando el video en vivo o la foto ya capturada. Antes estaba
+          dentro de la rama "!capturada" y React lo desmontaba (poniendo
+          canvasRef.current = null) en cuanto se tomaba la foto, lo que
+          rompía confirmar() al intentar usar canvas.toBlob(). */}
+      <canvas ref={canvasRef} className="hidden" />
+
       {!capturada ? (
         <>
           <div className="relative rounded-2xl overflow-hidden bg-black aspect-video">
@@ -259,7 +281,6 @@ function CamaraSelfi({ onFoto, onCancelar, reconocimientoFacial = false }) {
               </div>
             )}
           </div>
-          <canvas ref={canvasRef} className="hidden" />
           <p className="text-[#94a3b8] text-sm text-center">Centre su rostro en el círculo y presione capturar</p>
           {reconocimientoFacial && !faceApi && (
             <p className="text-yellow-400 text-xs text-center">
