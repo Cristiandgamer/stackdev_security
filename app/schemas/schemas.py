@@ -159,8 +159,6 @@ class PuntoControlBase(BaseModel):
     descripcion: Optional[str] = None
     latitud: float
     longitud: float
-    # Optional para tolerar filas antiguas en BD que tienen NULL
-    # tras la migración ALTER TABLE ADD COLUMN
     radio_metros: Optional[int] = 50
     orden: int = 0
 
@@ -230,7 +228,7 @@ class VerificacionCreate(BaseModel):
     punto_control_id: int
     turno_id: int
     guardia_id: int
-    metodo: str  # gps | qr | ambos
+    metodo: str
     latitud_verificada: Optional[float] = None
     longitud_verificada: Optional[float] = None
     qr_escaneado: Optional[str] = None
@@ -254,6 +252,8 @@ class VerificacionOut(BaseModel):
 class TurnoBase(BaseModel):
     guardia_id: int
     instalacion_id: int
+    # ronda_id permite vincular una ronda al turno desde la creación/edición
+    ronda_id: Optional[int] = None
     fecha_inicio: datetime
     fecha_fin: datetime
     dias_semana: Optional[List[str]] = None
@@ -271,6 +271,7 @@ class TurnoUpdate(BaseModel):
     fecha_inicio: Optional[datetime] = None
     fecha_fin: Optional[datetime] = None
     dias_semana: Optional[List[str]] = None
+    ronda_id: Optional[int] = None
 
 
 class TurnoOut(TurnoBase):
@@ -314,7 +315,6 @@ class AsistenciaOut(BaseModel):
 # ── ArchivoIncidente ───────────────────────────────────────────────────────────
 
 class ArchivoIncidenteOut(BaseModel):
-    """Representación pública de un archivo adjunto a un incidente."""
     id: int
     incidente_id: int
     nombre_archivo: Optional[str] = None

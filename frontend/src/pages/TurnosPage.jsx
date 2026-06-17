@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Calendar, Plus, Clock, Pencil, Filter } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -50,14 +50,12 @@ function buildCalendarDays(baseDate) {
   const month = baseDate.getMonth()
   const firstDay = new Date(year, month, 1)
   const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const startWeekday = firstDay.getDay() // 0 domingo
+  const startWeekday = firstDay.getDay()
   const offset = startWeekday === 0 ? 6 : startWeekday - 1
 
   return Array.from({ length: offset + daysInMonth }, (_, idx) => {
     const day = idx - offset + 1
-    return day > 0
-      ? new Date(year, month, day)
-      : null
+    return day > 0 ? new Date(year, month, day) : null
   })
 }
 
@@ -73,46 +71,60 @@ function getRangeInfo(start, end) {
 
 function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
   const initialFechaInicio = inicial?.fecha_inicio ? new Date(inicial.fecha_inicio) : null
-  const initialFechaFin = inicial?.fecha_fin ? new Date(inicial.fecha_fin) : null
-  const initialStartTime = initialFechaInicio
+  const initialFechaFin    = inicial?.fecha_fin    ? new Date(inicial.fecha_fin)    : null
+  const initialStartTime   = initialFechaInicio
     ? { hour: ((initialFechaInicio.getHours() + 11) % 12) + 1, minute: String(initialFechaInicio.getMinutes()).padStart(2, '0'), ampm: initialFechaInicio.getHours() >= 12 ? 'PM' : 'AM' }
     : { hour: 8, minute: '00', ampm: 'AM' }
-  const initialEndTime = initialFechaFin
+  const initialEndTime     = initialFechaFin
     ? { hour: ((initialFechaFin.getHours() + 11) % 12) + 1, minute: String(initialFechaFin.getMinutes()).padStart(2, '0'), ampm: initialFechaFin.getHours() >= 12 ? 'PM' : 'AM' }
     : { hour: 5, minute: '00', ampm: 'PM' }
 
   const [form, setForm] = useState(inicial ? {
-    guardia_id: inicial.guardia_id,
+    guardia_id:    inicial.guardia_id,
     instalacion_id: inicial.instalacion_id,
-    range_start: initialFechaInicio,
-    range_end: initialFechaFin,
-    start_time: initialStartTime,
-    end_time: initialEndTime,
-    dias_semana: inicial.dias_semana || [],
-    tipo: inicial.tipo,
-    estado: inicial.estado,
-    notas: inicial.notas || '',
+    ronda_id:      inicial.ronda_id || '',
+    range_start:   initialFechaInicio,
+    range_end:     initialFechaFin,
+    start_time:    initialStartTime,
+    end_time:      initialEndTime,
+    dias_semana:   inicial.dias_semana || [],
+    tipo:          inicial.tipo,
+    estado:        inicial.estado,
+    notas:         inicial.notas || '',
   } : {
-    guardia_id: '', instalacion_id: '', range_start: null, range_end: null,
-    start_time: { hour: 8, minute: '00', ampm: 'AM' }, end_time: { hour: 5, minute: '00', ampm: 'PM' },
-    dias_semana: [], tipo: 'diurno', estado: 'asignado', notas: ''
+    guardia_id: '', instalacion_id: '', ronda_id: '',
+    range_start: null, range_end: null,
+    start_time: { hour: 8, minute: '00', ampm: 'AM' },
+    end_time:   { hour: 5, minute: '00', ampm: 'PM' },
+    dias_semana: [], tipo: 'diurno', estado: 'asignado', notas: '',
   })
+
+  // Rondas disponibles para la instalación seleccionada
+  const [rondas, setRondas] = useState([])
+  const [loadingRondas, setLoadingRondas] = useState(false)
+
+  useEffect(() => {
+    if (!form.instalacion_id) { setRondas([]); return }
+    setLoadingRondas(true)
+    seguridadService.listarRondas(form.instalacion_id)
+      .then(r => setRondas(Array.isArray(r?.data) ? r.data : []))
+      .catch(() => setRondas([]))
+      .finally(() => setLoadingRondas(false))
+  }, [form.instalacion_id])
 
   const calendarBase = form.range_start || new Date()
   const calendarDays = useMemo(() => buildCalendarDays(calendarBase), [calendarBase])
-  const rangeInfo = useMemo(() => getRangeInfo(form.range_start, form.range_end), [form.range_start, form.range_end])
+  const rangeInfo    = useMemo(() => getRangeInfo(form.range_start, form.range_end), [form.range_start, form.range_end])
 
   const selectDate = (date) => {
     if (!form.range_start || (form.range_start && form.range_end)) {
       setForm(f => ({ ...f, range_start: date, range_end: null }))
       return
     }
-
     if (date < form.range_start) {
       setForm(f => ({ ...f, range_start: date, range_end: f.range_start }))
       return
     }
-
     setForm(f => ({ ...f, range_end: date }))
   }
 
@@ -126,9 +138,9 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
   }
 
   const startTimeString = timeToString(form.start_time)
-  const endTimeString = timeToString(form.end_time)
-  const startDateTime = dateWithTime(dateToIsoDate(form.range_start), startTimeString)
-  const endDateTime = dateWithTime(dateToIsoDate(form.range_end), endTimeString)
+  const endTimeString   = timeToString(form.end_time)
+  const startDateTime   = dateWithTime(dateToIsoDate(form.range_start), startTimeString)
+  const endDateTime     = dateWithTime(dateToIsoDate(form.range_end),   endTimeString)
 
   const { mutate, isPending } = useMutation({
     mutationFn: (data) => inicial
@@ -140,25 +152,29 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (!form.guardia_id) return toast.error('Seleccione un guardia')
+    if (!form.guardia_id)    return toast.error('Seleccione un guardia')
     if (!form.instalacion_id) return toast.error('Seleccione una instalación')
     if (!form.range_start || !form.range_end) return toast.error('Seleccione fecha de inicio y fin')
-    if (!startDateTime || !endDateTime || startDateTime >= endDateTime) return toast.error('Seleccione un rango de tiempo válido')
+    if (!startDateTime || !endDateTime || startDateTime >= endDateTime)
+      return toast.error('Seleccione un rango de tiempo válido')
 
     mutate({
-      guardia_id: Number(form.guardia_id),
+      guardia_id:     Number(form.guardia_id),
       instalacion_id: Number(form.instalacion_id),
-      fecha_inicio: startDateTime.toISOString(),
-      fecha_fin: endDateTime.toISOString(),
-      dias_semana: form.dias_semana,
-      tipo: form.tipo,
-      estado: form.estado,
-      notas: form.notas,
+      ronda_id:       form.ronda_id ? Number(form.ronda_id) : null,
+      fecha_inicio:   startDateTime.toISOString(),
+      fecha_fin:      endDateTime.toISOString(),
+      dias_semana:    form.dias_semana,
+      tipo:           form.tipo,
+      estado:         form.estado,
+      notas:          form.notas,
     })
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+
+      {/* Guardia */}
       <div>
         <label className="label">Guardia *</label>
         <select className="input-field" value={form.guardia_id}
@@ -172,15 +188,41 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
         </select>
       </div>
 
+      {/* Instalación */}
       <div>
         <label className="label">Instalación *</label>
         <select className="input-field" value={form.instalacion_id}
-          onChange={e => setForm(f => ({ ...f, instalacion_id: e.target.value }))}>
+          onChange={e => setForm(f => ({ ...f, instalacion_id: e.target.value, ronda_id: '' }))}>
           <option value="">Seleccionar instalación</option>
-          {instalaciones?.map(i => <option key={i.id} value={i.id}>{i.nombre} — {i.ciudad}</option>)}
+          {instalaciones?.map(i => (
+            <option key={i.id} value={i.id}>{i.nombre} — {i.ciudad}</option>
+          ))}
         </select>
       </div>
 
+      {/* Ronda — se carga dinámicamente al seleccionar instalación */}
+      <div>
+        <label className="label">Ronda de patrullaje</label>
+        {!form.instalacion_id ? (
+          <p className="text-[#475569] text-sm mt-1">Selecciona una instalación para ver las rondas disponibles.</p>
+        ) : loadingRondas ? (
+          <p className="text-[#94a3b8] text-sm mt-1">Cargando rondas…</p>
+        ) : rondas.length === 0 ? (
+          <p className="text-[#94a3b8] text-sm mt-1">No hay rondas configuradas para esta instalación.</p>
+        ) : (
+          <select className="input-field" value={form.ronda_id}
+            onChange={e => setForm(f => ({ ...f, ronda_id: e.target.value }))}>
+            <option value="">Sin ronda asignada</option>
+            {rondas.map(r => (
+              <option key={r.id} value={r.id}>
+                {r.nombre}{r.descripcion ? ` — ${r.descripcion}` : ''}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Rango de fechas */}
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -199,16 +241,20 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
           {calendarDays.map((date, index) => {
             if (!date) return <div key={index} />
             const isSelectedStart = form.range_start && date.toDateString() === form.range_start.toDateString()
-            const isSelectedEnd = form.range_end && date.toDateString() === form.range_end.toDateString()
+            const isSelectedEnd   = form.range_end   && date.toDateString() === form.range_end.toDateString()
             const inRange = form.range_start && form.range_end && date >= form.range_start && date <= form.range_end
             return (
               <button
                 key={index}
                 type="button"
                 onClick={() => selectDate(date)}
-                className={`h-10 rounded-lg text-sm transition-all ${isSelectedStart || isSelectedEnd ? 'bg-brand text-white' : inRange ? 'bg-blue-500/20 text-white' : 'bg-white/5 text-white hover:bg-white/10'}`}
-                aria-pressed={isSelectedStart || isSelectedEnd}
-                aria-label={`Día ${date.getDate()}`}
+                className={`h-10 rounded-lg text-sm transition-all ${
+                  isSelectedStart || isSelectedEnd
+                    ? 'bg-brand text-white'
+                    : inRange
+                      ? 'bg-blue-500/20 text-white'
+                      : 'bg-white/5 text-white hover:bg-white/10'
+                }`}
               >
                 {date.getDate()}
               </button>
@@ -222,7 +268,11 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
               key={day}
               type="button"
               onClick={() => toggleWeekday(day)}
-              className={`rounded-2xl border px-2 py-2 text-xs font-medium transition ${form.dias_semana.includes(day) ? 'bg-brand border-brand text-white' : 'bg-white/5 border-white/10 text-[#cbd5e1]'}`}
+              className={`rounded-2xl border px-2 py-2 text-xs font-medium transition ${
+                form.dias_semana.includes(day)
+                  ? 'bg-brand border-brand text-white'
+                  : 'bg-white/5 border-white/10 text-[#cbd5e1]'
+              }`}
             >
               {day.slice(0, 3)}
             </button>
@@ -230,6 +280,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
         </div>
       </div>
 
+      {/* Horas */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Hora de Entrada *</label>
@@ -249,7 +300,6 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
             </select>
           </div>
         </div>
-
         <div>
           <label className="label">Hora de Salida *</label>
           <div className="grid grid-cols-[1fr_1fr_1fr] gap-2">
@@ -270,6 +320,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
         </div>
       </div>
 
+      {/* Tipo / Estado */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="label">Tipo</label>
@@ -289,9 +340,12 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
         )}
       </div>
 
+      {/* Notas */}
       <div>
         <label className="label">Notas</label>
-        <textarea className="input-field resize-none" rows={2} placeholder="Instrucciones especiales..." value={form.notas}
+        <textarea className="input-field resize-none" rows={2}
+          placeholder="Instrucciones especiales..."
+          value={form.notas}
           onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} />
       </div>
 
@@ -368,7 +422,8 @@ export default function TurnosPage() {
       </div>
 
       {isLoading ? <Spinner /> : turnos?.length === 0 ? (
-        <EmptyState icon={Calendar} title="Sin turnos" description="No hay turnos con el filtro seleccionado."
+        <EmptyState icon={Calendar} title="Sin turnos"
+          description="No hay turnos con el filtro seleccionado."
           action={<button onClick={() => setModal({})} className="btn-primary"><Plus className="w-5 h-5" />Crear turno</button>} />
       ) : (
         <div className="space-y-3">
@@ -400,6 +455,13 @@ export default function TurnosPage() {
                 <span>{formatFecha(t.fecha_fin)}</span>
                 <span className="badge-gray capitalize ml-auto">{t.tipo}</span>
               </div>
+
+              {/* Indicador de ronda asignada */}
+              {t.ronda_id && (
+                <p className="text-[#64a0d4] text-xs mt-2">
+                  🔄 Ronda asignada
+                </p>
+              )}
 
               {t.notas && (
                 <p className="text-[#94a3b8] text-sm mt-2 bg-white/5 px-3 py-2 rounded-lg">{t.notas}</p>
