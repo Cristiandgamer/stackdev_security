@@ -366,7 +366,12 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     onSuccess: () => {
       toast.success('Entrada registrada')
       setPaso('inicio'); setFotoFile(null); setFotoPreview(null)
-      onMarcado()
+      // FIX race condition: esperamos 400ms antes de refetchear para dar
+      // tiempo a que el commit de marcar_entrada sea visible en la DB.
+      // Sin este delay el refetch de mi-asistencia puede llegar al backend
+      // antes de que la transaccion sea visible y devuelve null, haciendo
+      // que la UI muestre "Marcar Entrada" aunque la entrada ya existe.
+      setTimeout(() => onMarcado(), 400)
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
   })
@@ -376,7 +381,7 @@ function PanelMarcaje({ turno, asistencia, onMarcado }) {
     onSuccess: () => {
       toast.success('Salida registrada')
       setPaso('inicio'); setFotoFile(null); setFotoPreview(null)
-      onMarcado()
+      setTimeout(() => onMarcado(), 400)
     },
     onError: (e) => toast.error(e.response?.data?.detail || e.message),
   })

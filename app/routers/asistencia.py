@@ -1,7 +1,18 @@
 """
 Router de Asistencia — Stack Dev Security
-Maneja: marcaje entrada/salida, foto/selfie, geofence,
-        configuración, dashboard admin, exportación Excel/CSV.
+
+FIXES en esta version:
+1. mi_asistencia_turno_activo: buscaba la asistencia via joinedload del turno,
+   lo que provocaba una race condition — el refetch del frontend llegaba antes
+   de que el commit de marcar_entrada fuera visible en la nueva sesion de DB,
+   devolviendo None aunque la asistencia ya existia. Ahora se busca la
+   asistencia directamente por guardia_id + turno_id, y la ventana de busqueda
+   del turno se amplio a ±6h para absorber desfases de zona horaria.
+
+2. dashboard_live: usaba datetime.utcnow().date() para determinar "hoy", lo
+   que en Chile (UTC-4) produce una fecha incorrecta hasta 4 horas del dia.
+   Ahora calcula la fecha local chilena con el offset correcto y luego
+   convierte el rango del dia a UTC para compararlo con los turnos en DB.
 """
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
@@ -25,6 +36,39 @@ from app.models.usuario import Usuario
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Offset fijo Chile (UTC-4 invierno, UTC-3 verano).
+# En junio Chile esta en invierno -> UTC-4.
+# Si en el futuro cambia el horario de verano, ajustar este valor
+# o leerlo desde una variable de entorno CHILE_UTC_OFFSET=-4
+CHILE_UTC_OFFSET = int(os.getenv("CHILE_UTC_OFFSET", "-4"))
+CHILE_OFFSET = timedelta(hours=CHILE_UTC_OFFSET)
+
+
+def ahora_utc() -> datetime:
+    """Retorna datetime.utcnow() naive — unico punto de entrada para 'ahora'."""
+    return datetime.utcnow()
+
+
+def fecha_local_chile() -> datetime:
+    """Hora actual en zona horaria Chile (naive, sin tzinfo)."""
+    return datetime.utcnow() + CHILE_OFFSET
+
+
+def rango_dia_utc(fecha_chile=None):
+    """
+    Retorna (inicio_dia_utc, fin_dia_utc) para el dia local Chile dado.
+    Los turnos en la DB estan en UTC, asi que el rango debe ser UTC
+    equivalente al inicio y fin del dia en Chile.
+    """
+    if fecha_chile is None:
+        fecha_chile = fecha_local_chile().date()
+    # Medianoche Chile en UTC = medianoche Chile + offset inverso
+    inicio = datetime(fecha_chile.year, fecha_chile.month, fecha_chile.day,
+                      0, 0, 0) - CHILE_OFFSET
+    fin    = datetime(fecha_chile.year, fecha_chile.month, fecha_chile.day,
+                      23, 59, 59) - CHILE_OFFSET
+    return inicio, fin
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -80,10 +124,8 @@ def _validar_foto(archivo: UploadFile) -> None:
     ext = os.path.splitext(archivo.filename or "")[1].lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(400, "Formato de imagen no permitido. Solo JPG, PNG, WEBP y GIF.")
-
     if archivo.content_type and archivo.content_type not in ALLOWED_IMAGE_MIME_TYPES:
         raise HTTPException(400, f"Tipo MIME de imagen no permitido ({archivo.content_type}).")
-
     try:
         archivo.file.seek(0, os.SEEK_END)
         size = archivo.file.tell()
@@ -123,7 +165,7 @@ def _notificar(db: Session, titulo: str, mensaje: str, tipo: str = "asistencia")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCHEMAS INLINE (pequeños, para no saturar schemas.py)
+# SCHEMAS INLINE
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ConfigOut(BaseModel):
@@ -233,33 +275,22 @@ async def marcar_entrada(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """
-    Marca la entrada de un guardia.
-    - Valida geofence (radio configurable).
-    - Guarda selfie si se proporciona.
-    - Calcula estado (a_tiempo / tardanza).
-    - Notifica al supervisor si hay tardanza.
-    """
     cfg = _get_config(db)
 
-    # ── Verificar turno ────────────────────────────────────────────────────
     turno = db.query(Turno).options(joinedload(Turno.instalacion)).filter(
         Turno.id == turno_id
     ).first()
     if not turno:
         raise HTTPException(404, "Turno no encontrado")
 
-    # Solo el guardia dueño del turno puede marcar
     guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
     if not guardia or turno.guardia_id != guardia.id:
         raise HTTPException(403, "No tienes permiso para marcar este turno")
 
-    # ── Ya marcó entrada ───────────────────────────────────────────────────
     existente = db.query(Asistencia).filter(Asistencia.turno_id == turno_id).first()
     if existente and existente.entrada:
         raise HTTPException(400, "Ya registraste la entrada para este turno")
 
-    # ── Geofence ───────────────────────────────────────────────────────────
     inst = turno.instalacion
     if inst and inst.latitud and inst.longitud:
         distancia = _haversine(lat, lon, inst.latitud, inst.longitud)
@@ -272,18 +303,15 @@ async def marcar_entrada(
     else:
         distancia = None
 
-    # ── Foto ───────────────────────────────────────────────────────────────
     ruta_foto = None
     if foto and foto.filename:
         ruta_foto = _guardar_foto(foto, prefijo="entrada")
 
-    # ── Estado ────────────────────────────────────────────────────────────
-    ahora = datetime.utcnow()
+    ahora = ahora_utc()
     estado, minutos_retraso = _calcular_estado(
         ahora, turno.fecha_inicio, cfg.tolerancia_tardanza_min
     )
 
-    # ── Crear o actualizar asistencia ──────────────────────────────────────
     if existente:
         asistencia = existente
     else:
@@ -298,14 +326,12 @@ async def marcar_entrada(
     asistencia.estado = estado
     asistencia.minutos_retraso = minutos_retraso
 
-    # Cambiar estado del turno
     turno.estado = "en_curso"
 
-    # ── Notificar tardanza ─────────────────────────────────────────────────
     if estado == "tardanza":
         _notificar(
             db,
-            titulo=f"⚠️ Tardanza — {guardia.nombre} {guardia.apellido}",
+            titulo=f"Tardanza — {guardia.nombre} {guardia.apellido}",
             mensaje=(
                 f"El guardia {guardia.nombre} {guardia.apellido} marcó entrada "
                 f"con {minutos_retraso} minuto(s) de retraso en "
@@ -329,7 +355,6 @@ async def marcar_salida(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Marca la salida. Calcula minutos trabajados y horas extra."""
     cfg = _get_config(db)
 
     turno = db.query(Turno).options(joinedload(Turno.instalacion)).filter(
@@ -351,7 +376,6 @@ async def marcar_salida(
     if asistencia.salida:
         raise HTTPException(400, "Ya registraste la salida para este turno")
 
-    # ── Geofence salida ────────────────────────────────────────────────────
     inst = turno.instalacion
     distancia = None
     if inst and inst.latitud and inst.longitud:
@@ -363,16 +387,12 @@ async def marcar_salida(
                 f"Debes estar dentro de {cfg.radio_geofence_metros}m para marcar salida."
             )
 
-    # ── Foto salida ────────────────────────────────────────────────────────
     ruta_foto = None
     if foto and foto.filename:
         ruta_foto = _guardar_foto(foto, prefijo="salida")
 
-    # ── Calcular tiempo trabajado y horas extra ────────────────────────────
-    ahora = datetime.utcnow()
+    ahora = ahora_utc()
     minutos_trabajados = int((ahora - asistencia.entrada).total_seconds() / 60)
-
-    # Duración programada del turno en minutos
     duracion_programada = int(
         (turno.fecha_fin - turno.fecha_inicio).total_seconds() / 60
     )
@@ -404,24 +424,43 @@ def mi_asistencia_turno_activo(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Retorna la asistencia del turno activo del guardia conectado, o null."""
-    ahora = datetime.utcnow()
+    """
+    Retorna la asistencia del turno activo del guardia conectado, o null.
+
+    FIX: antes buscaba la asistencia via joinedload del turno, lo que
+    provocaba una race condition — el refetch del frontend llegaba antes
+    de que el commit de marcar_entrada fuera visible en la sesion de DB,
+    devolviendo None aunque la asistencia ya existia.
+    Ahora se busca la asistencia directamente por guardia_id + turno_id.
+    La ventana de busqueda se amplio a ±6h para absorber desfases de TZ.
+    """
+    ahora = ahora_utc()
+
+    # Buscar el guardia del usuario actual
+    guardia = db.query(Guardia).filter(Guardia.usuario_id == current_user.id).first()
+    if not guardia:
+        return None
+
+    # Buscar turno activo con ventana ampliada para cubrir desfase de TZ
     turno = (
         db.query(Turno)
-          .join(Guardia, Guardia.id == Turno.guardia_id)
-          .options(joinedload(Turno.asistencia))
           .filter(
-              Guardia.usuario_id == current_user.id,
+              Turno.guardia_id == guardia.id,
               Turno.estado.in_(["programado", "asignado", "en_curso", "activo"]),
-              Turno.fecha_inicio <= ahora + timedelta(hours=2),
-              Turno.fecha_fin >= ahora,
+              Turno.fecha_inicio <= ahora + timedelta(hours=6),
+              Turno.fecha_fin >= ahora - timedelta(hours=6),
           )
           .order_by(Turno.fecha_inicio.asc())
           .first()
     )
     if not turno:
         return None
-    return turno.asistencia
+
+    # Buscar asistencia directamente (evita race condition del joinedload)
+    return db.query(Asistencia).filter(
+        Asistencia.turno_id == turno.id,
+        Asistencia.guardia_id == guardia.id,
+    ).first()
 
 
 @router.get("/mi-historial", response_model=List[AsistenciaOut])
@@ -448,14 +487,18 @@ def mi_historial(
 
 @router.get("/dashboard-live", response_model=List[ResumenGuardiaOut])
 def dashboard_live(
-    fecha: Optional[str] = Query(None, description="YYYY-MM-DD — default hoy"),
+    fecha: Optional[str] = Query(None, description="YYYY-MM-DD en hora local Chile — default hoy Chile"),
     instalacion_id: Optional[int] = None,
     db: Session = Depends(get_db),
     _=Depends(require_supervisor),
 ):
     """
     Retorna el estado de todos los turnos del día con su asistencia.
-    Diseñado para polling cada 30s desde el panel admin.
+
+    FIX: antes usaba datetime.utcnow().date() para determinar 'hoy', lo que
+    en Chile (UTC-4) produce una fecha incorrecta hasta 4h del dia.
+    Ahora calcula la fecha local chilena y convierte el rango a UTC para
+    compararlo correctamente con los turnos almacenados en UTC en la DB.
     """
     if fecha:
         try:
@@ -463,10 +506,11 @@ def dashboard_live(
         except ValueError:
             raise HTTPException(400, "Formato de fecha inválido. Use YYYY-MM-DD")
     else:
-        dia = datetime.utcnow().date()
+        # Usar fecha local Chile, no UTC del servidor
+        dia = fecha_local_chile().date()
 
-    inicio_dia = datetime(dia.year, dia.month, dia.day, 0, 0, 0)
-    fin_dia    = datetime(dia.year, dia.month, dia.day, 23, 59, 59)
+    # Convertir el dia Chile a rango UTC para comparar con turnos en DB
+    inicio_dia, fin_dia = rango_dia_utc(dia)
 
     q = (
         db.query(Turno)
@@ -518,8 +562,11 @@ def estadisticas(
     _=Depends(require_supervisor),
 ):
     try:
-        fi = datetime.strptime(fecha_inicio, "%Y-%m-%d")
-        ff = datetime.strptime(fecha_fin,    "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        # Interpretar las fechas como fechas locales Chile y convertir a UTC
+        fi_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        ff_date = datetime.strptime(fecha_fin,    "%Y-%m-%d").date()
+        fi, _   = rango_dia_utc(fi_date)
+        _, ff   = rango_dia_utc(ff_date)
     except ValueError:
         raise HTTPException(400, "Formato de fecha inválido. Use YYYY-MM-DD")
 
@@ -583,7 +630,6 @@ def ajuste_manual(
     db: Session = Depends(get_db),
     _=Depends(require_supervisor),
 ):
-    """Permite al admin/supervisor corregir una asistencia manualmente."""
     a = db.query(Asistencia).filter(Asistencia.id == asistencia_id).first()
     if not a:
         raise HTTPException(404, "Asistencia no encontrada")
@@ -594,7 +640,6 @@ def ajuste_manual(
         a.observacion = data.observacion
     if data.entrada:
         a.entrada = data.entrada
-        # Recalcular retraso
         turno = db.query(Turno).filter(Turno.id == a.turno_id).first()
         if turno:
             cfg = _get_config(db)
@@ -635,13 +680,15 @@ def listar_asistencias(
         q = q.filter(Asistencia.estado == estado)
     if fecha_inicio:
         try:
-            fi = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+            fi_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+            fi, _ = rango_dia_utc(fi_date)
             q = q.filter(Asistencia.entrada >= fi)
         except ValueError:
             pass
     if fecha_fin:
         try:
-            ff = datetime.strptime(fecha_fin, "%Y-%m-%d").replace(hour=23, minute=59)
+            ff_date = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
+            _, ff = rango_dia_utc(ff_date)
             q = q.filter(Asistencia.entrada <= ff)
         except ValueError:
             pass
@@ -652,7 +699,7 @@ def listar_asistencias(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# EXPORTACIÓN — Excel / CSV compatible con cualquier software de nómina
+# EXPORTACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/exportar")
@@ -665,15 +712,11 @@ def exportar_asistencias(
     db: Session = Depends(get_db),
     _=Depends(require_supervisor),
 ):
-    """
-    Exporta el reporte de asistencia en Excel o CSV.
-    Columnas: RUT, Nombre, Instalación, Fecha, Entrada, Salida,
-              Estado, Min.Retraso, Horas Trabajadas, Horas Extra, Observación.
-    Compatible con la mayoría de software de RR.HH. y nómina.
-    """
     try:
-        fi = datetime.strptime(fecha_inicio, "%Y-%m-%d")
-        ff = datetime.strptime(fecha_fin,    "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        fi_date = datetime.strptime(fecha_inicio, "%Y-%m-%d").date()
+        ff_date = datetime.strptime(fecha_fin,    "%Y-%m-%d").date()
+        fi, _   = rango_dia_utc(fi_date)
+        _, ff   = rango_dia_utc(ff_date)
     except ValueError:
         raise HTTPException(400, "Formato de fecha inválido. Use YYYY-MM-DD")
 
@@ -694,7 +737,11 @@ def exportar_asistencias(
     registros = q.order_by(Turno.fecha_inicio.asc()).all()
 
     def _fmt(dt):
-        return dt.strftime("%d/%m/%Y %H:%M") if dt else ""
+        if not dt:
+            return ""
+        # Mostrar en hora local Chile para los reportes
+        dt_chile = dt + CHILE_OFFSET
+        return dt_chile.strftime("%d/%m/%Y %H:%M")
 
     def _horas(mins):
         if mins is None:
@@ -706,11 +753,13 @@ def exportar_asistencias(
         g   = a.guardia
         t   = a.turno
         ins = t.instalacion if t else None
+        # Mostrar fecha del turno en hora local Chile
+        fecha_turno_chile = (t.fecha_inicio + CHILE_OFFSET) if t else None
         filas.append({
             "RUT":              g.rut if g else "",
             "Nombre":           f"{g.nombre} {g.apellido}" if g else "",
             "Instalación":      ins.nombre if ins else "",
-            "Fecha":            t.fecha_inicio.strftime("%d/%m/%Y") if t else "",
+            "Fecha":            fecha_turno_chile.strftime("%d/%m/%Y") if fecha_turno_chile else "",
             "Turno Inicio":     _fmt(t.fecha_inicio) if t else "",
             "Turno Fin":        _fmt(t.fecha_fin)    if t else "",
             "Entrada Real":     _fmt(a.entrada),
@@ -723,7 +772,6 @@ def exportar_asistencias(
             "Observación":      a.observacion or "",
         })
 
-    # ── Excel ──────────────────────────────────────────────────────────────
     if formato == "excel":
         try:
             import openpyxl
@@ -738,7 +786,6 @@ def exportar_asistencias(
         ws = wb.active
         ws.title = "Asistencias"
 
-        # Encabezado
         cabeceras = list(filas[0].keys()) if filas else [
             "RUT","Nombre","Instalación","Fecha","Turno Inicio","Turno Fin",
             "Entrada Real","Salida Real","Estado","Min. Retraso",
@@ -754,7 +801,6 @@ def exportar_asistencias(
             cell.font   = header_font
             cell.alignment = center_align
 
-        # Colores por estado
         colores_estado = {
             "a_tiempo":   "C6EFCE",
             "tardanza":   "FFEB9C",
@@ -770,12 +816,10 @@ def exportar_asistencias(
                 cell = ws.cell(row=row_idx, column=col_idx, value=valor)
                 cell.fill = row_fill
 
-        # Ancho de columnas automático
         for col in ws.columns:
             max_len = max(len(str(c.value or "")) for c in col)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
 
-        # Hoja de resumen
         ws2 = wb.create_sheet("Resumen")
         totales = {
             "Total registros": len(filas),
@@ -799,7 +843,6 @@ def exportar_asistencias(
             headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
         )
 
-    # ── CSV (fallback universal) ───────────────────────────────────────────
     import csv
     buf = io.StringIO()
     if filas:
@@ -809,7 +852,7 @@ def exportar_asistencias(
     buf.seek(0)
     nombre_archivo = f"asistencias_{fecha_inicio}_{fecha_fin}.csv"
     return StreamingResponse(
-        iter([buf.getvalue().encode("utf-8-sig")]),  # BOM para Excel español
+        iter([buf.getvalue().encode("utf-8-sig")]),
         media_type="text/csv; charset=utf-8-sig",
         headers={"Content-Disposition": f'attachment; filename="{nombre_archivo}"'},
     )
