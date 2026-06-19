@@ -1,12 +1,11 @@
 /**
  * RondaPage.jsx — Página de ronda para el guardia
  *
- * Flujo:
- * 1. Carga el turno activo con su ronda y ejecuciones
- * 2. Muestra mapa Mapbox con puntos numerados como capas GeoJSON (no DOM Markers)
- * 3. GPS verifica contra coordenadas del punto de control
- * 4. QR como respaldo
- * 5. Al completar: cuenta regresiva hasta la siguiente ronda
+ * Mapa Mapbox:
+ *  - interactive: false  → los puntos nunca se mueven (mapa estático)
+ *  - Colapso via max-height/overflow:hidden → el canvas SIEMPRE tiene
+ *    dimensiones reales; Mapbox no pierde contexto WebGL al ocultar/mostrar
+ *  - Marcadores como capas GeoJSON (circle + symbol) → renderizados en canvas
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -22,9 +21,10 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import { rondasService } from '../services/api'
 import { Spinner, EmptyState } from '../components/index.jsx'
 
+// Token a nivel de módulo — disponible antes de cualquier render
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
 
-// ── Helper: extrae un mensaje de error legible ───────────────────────────────
+// ── Helper: mensaje de error legible ─────────────────────────────────────────
 function errMsg(e) {
   const detail = e?.response?.data?.detail
   if (typeof detail === 'string') return detail
@@ -34,8 +34,8 @@ function errMsg(e) {
 
 // ── Hook GPS ──────────────────────────────────────────────────────────────────
 function useGPS() {
-  const [pos, setPos]       = useState(null)
-  const [error, setError]   = useState(null)
+  const [pos, setPos]         = useState(null)
+  const [error, setError]     = useState(null)
   const [loading, setLoading] = useState(false)
 
   const obtener = useCallback(() => {
@@ -63,88 +63,91 @@ function useGPS() {
   return { pos, error, loading, obtener }
 }
 
-// ── Mapa Mapbox ───────────────────────────────────────────────────────────────
-// Puntos = capas GeoJSON (circle + symbol) → renderizadas en canvas WebGL.
-// El contenedor NUNCA se desmonta del DOM (display:none al colapsar) para que
-// Mapbox no pierda el contexto WebGL y el mapa cargue bien al reabrirlo.
+// ── Mapa Mapbox estático ───────────────────────────────────────────────────────
+//
+// DECISIONES DE DISEÑO:
+//
+// 1. interactive: false → el usuario NO puede panear/zoomar.
+//    Esto elimina el problema de "los puntos se mueven": al no poder mover el
+//    mapa, los marcadores siempre están en el mismo lugar en pantalla.
+//
+// 2. Colapso con max-height + overflow:hidden (NO display:none):
+//    El div del mapa SIEMPRE tiene height:320px real en el DOM.
+//    display:none pone el div a 0×0 → Mapbox falla al renderizar tiles.
+//    Con max-height:0 en el padre, el div está "clippeado" pero sigue
+//    teniendo sus dimensiones reales → Mapbox renderiza correctamente.
+//
+// 3. Marcadores como capas GeoJSON (circle + symbol):
+//    Renderizados directamente en el canvas WebGL como parte del mapa.
+//    No son elementos DOM flotantes → no tienen lag visual.
+//
 function MapaRonda({ puntos, posGuardia }) {
-  const mapContainer = useRef(null)
-  const mapRef       = useRef(null)
+  const mapContainer  = useRef(null)
+  const mapRef        = useRef(null)
   const [mapLoaded, setMapLoaded]   = useState(false)
   const [expandido, setExpandido]   = useState(true)
 
   const sorted = [...puntos].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
 
-  // ── Inicializar mapa (una sola vez) ────────────────────────────────────────
+  // ── Inicializar mapa (una sola vez al montar el componente) ───────────────
   useEffect(() => {
-    if (!mapContainer.current || mapRef.current || sorted.length === 0) return
+    if (!mapContainer.current || mapRef.current) return
 
-    mapRef.current = new mapboxgl.Map({
+    const map = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [sorted[0].longitud, sorted[0].latitud],
-      zoom: 17,
-      attributionControl: false,
+      style:     'mapbox://styles/mapbox/dark-v11',
+      center:    sorted.length > 0
+        ? [sorted[0].longitud, sorted[0].latitud]
+        : [-70.6483, -33.4569], // Santiago como fallback
+      zoom:      15,
+      // ↓ CLAVE: deshabilita toda interacción → puntos nunca se mueven
+      interactive:          false,
+      attributionControl:   false,
+      preserveDrawingBuffer: true, // Mejora compatibilidad en algunos móviles
     })
 
-    mapRef.current.addControl(
-      new mapboxgl.NavigationControl({ showCompass: false }),
-      'top-right',
-    )
-    mapRef.current.addControl(
+    map.addControl(
       new mapboxgl.AttributionControl({ compact: true }),
       'bottom-right',
     )
 
-    mapRef.current.on('load', () => setMapLoaded(true))
+    map.on('load', () => setMapLoaded(true))
+    mapRef.current = map
 
     return () => {
-      mapRef.current?.remove()
+      map.remove()
       mapRef.current = null
+      setMapLoaded(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sorted.length === 0])
-
-  // ── Resize al expandir (evita canvas gris/vacío) ───────────────────────────
-  useEffect(() => {
-    if (expandido && mapRef.current) {
-      // Pequeño timeout para esperar que el CSS aplique display:block
-      const t = setTimeout(() => mapRef.current?.resize(), 60)
-      return () => clearTimeout(t)
-    }
-  }, [expandido])
+  }, []) // Solo al montar — puntos ya existen porque MapaRonda solo renderiza cuando hay puntos
 
   // ── Actualizar capas GeoJSON cuando cambia el estado de los puntos ─────────
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || sorted.length === 0) return
     const map = mapRef.current
 
-    // Primer punto sin verificar (el "siguiente")
     const siguiente = sorted.find(p => !p.verificado)
 
-    // FeatureCollection de puntos
+    // Feature collection de puntos de control
     const features = sorted.map((p, i) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [p.longitud, p.latitud] },
       properties: {
-        numero:     String(i + 1),
-        nombre:     p.nombre,
-        verificado: p.verificado ? 1 : 0,
+        numero:      String(i + 1),
+        nombre:      p.nombre,
+        verificado:  p.verificado ? 1 : 0,
         esSiguiente: siguiente?.id === p.id ? 1 : 0,
-        // Color según estado
         color: p.verificado
           ? '#22c55e'
           : siguiente?.id === p.id
             ? '#f59e0b'
             : '#3b82f6',
-        // Radio del círculo según si es el siguiente o no
-        radio: siguiente?.id === p.id ? 17 : 13,
+        radio: siguiente?.id === p.id ? 18 : 14,
       },
     }))
 
-    const geoData = { type: 'FeatureCollection', features }
-
-    // Ruta (LineString)
+    const geoData  = { type: 'FeatureCollection', features }
     const lineData = {
       type: 'Feature',
       geometry: {
@@ -153,63 +156,48 @@ function MapaRonda({ puntos, posGuardia }) {
       },
     }
 
-    // ── Fuente + capas de ruta ────────────────────────────────────────────
+    // ── Ruta ────────────────────────────────────────────────────────────────
     if (map.getSource('ruta')) {
       map.getSource('ruta').setData(lineData)
     } else {
       map.addSource('ruta', { type: 'geojson', data: lineData })
 
-      // Sombra de la línea
       map.addLayer({
-        id: 'ruta-sombra',
-        type: 'line',
-        source: 'ruta',
+        id: 'ruta-sombra', type: 'line', source: 'ruta',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#000000', 'line-width': 7, 'line-opacity': 0.25 },
+        paint: { 'line-color': '#000', 'line-width': 7, 'line-opacity': 0.2 },
       })
-
-      // Línea punteada principal
       map.addLayer({
-        id: 'ruta-linea',
-        type: 'line',
-        source: 'ruta',
+        id: 'ruta-linea', type: 'line', source: 'ruta',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: {
-          'line-color': '#3b82f6',
-          'line-width': 2.5,
-          'line-dasharray': [3, 2],
-        },
+        paint: { 'line-color': '#3b82f6', 'line-width': 2.5, 'line-dasharray': [3, 2] },
       })
     }
 
-    // ── Fuente + capas de puntos ──────────────────────────────────────────
+    // ── Puntos: halo + círculo + número ─────────────────────────────────────
     if (map.getSource('puntos')) {
+      // Solo actualizar datos — las expresiones ['get', 'color'] se aplican solas
       map.getSource('puntos').setData(geoData)
-      // Los colores y radios se actualizan solos porque usan expresiones ["get", ...]
     } else {
       map.addSource('puntos', { type: 'geojson', data: geoData })
 
-      // Halo exterior (glow del siguiente punto)
+      // Halo (glow del siguiente punto)
       map.addLayer({
-        id: 'puntos-halo',
-        type: 'circle',
-        source: 'puntos',
+        id: 'puntos-halo', type: 'circle', source: 'puntos',
         paint: {
-          'circle-radius': ['match', ['get', 'esSiguiente'], 1, 26, 18],
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 0.22,
-          'circle-blur': 0.6,
+          'circle-radius': ['match', ['get', 'esSiguiente'], 1, 28, 20],
+          'circle-color':  ['get', 'color'],
+          'circle-opacity': 0.20,
+          'circle-blur':    0.5,
         },
       })
 
-      // Círculo principal (color del estado)
+      // Círculo principal
       map.addLayer({
-        id: 'puntos-circulo',
-        type: 'circle',
-        source: 'puntos',
+        id: 'puntos-circulo', type: 'circle', source: 'puntos',
         paint: {
-          'circle-radius': ['get', 'radio'],
-          'circle-color': ['get', 'color'],
+          'circle-radius':       ['get', 'radio'],
+          'circle-color':        ['get', 'color'],
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 2.5,
         },
@@ -217,76 +205,60 @@ function MapaRonda({ puntos, posGuardia }) {
 
       // Número encima del círculo
       map.addLayer({
-        id: 'puntos-numero',
-        type: 'symbol',
-        source: 'puntos',
+        id: 'puntos-numero', type: 'symbol', source: 'puntos',
         layout: {
-          'text-field': ['get', 'numero'],
-          'text-size': ['match', ['get', 'esSiguiente'], 1, 15, 12],
-          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-          'text-anchor': 'center',
-          'text-allow-overlap': true,
-          'text-ignore-placement': true,
+          'text-field':              ['get', 'numero'],
+          'text-size':               ['match', ['get', 'esSiguiente'], 1, 15, 12],
+          'text-font':               ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-anchor':             'center',
+          'text-allow-overlap':      true,
+          'text-ignore-placement':   true,
         },
         paint: {
-          'text-color': '#ffffff',
-          'text-halo-color': 'rgba(0,0,0,0.3)',
-          'text-halo-width': 0.5,
+          'text-color':       '#ffffff',
+          'text-halo-color':  'rgba(0,0,0,0.4)',
+          'text-halo-width':  0.5,
         },
       })
     }
 
-    // Ajustar vista
+    // ── Ajustar vista para mostrar todos los puntos ──────────────────────────
     if (sorted.length === 1) {
       map.flyTo({ center: [sorted[0].longitud, sorted[0].latitud], zoom: 18, duration: 800 })
     } else {
-      const coords = sorted.map(p => [p.longitud, p.latitud])
-      const bounds = coords.reduce(
+      const coords  = sorted.map(p => [p.longitud, p.latitud])
+      const bounds  = coords.reduce(
         (b, c) => b.extend(c),
         new mapboxgl.LngLatBounds(coords[0], coords[0]),
       )
       map.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 800 })
     }
-  }, [mapLoaded, puntos]) // puntos como dep para actualizar colores al verificar
+  }, [mapLoaded, puntos])
 
-  // ── Capa posición del guardia ──────────────────────────────────────────────
+  // ── Posición del guardia ───────────────────────────────────────────────────
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || !posGuardia) return
     const map = mapRef.current
 
-    const guardiaData = {
+    const data = {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [posGuardia.lng, posGuardia.lat] },
       properties: {},
     }
 
     if (map.getSource('guardia')) {
-      map.getSource('guardia').setData(guardiaData)
+      map.getSource('guardia').setData(data)
     } else {
-      map.addSource('guardia', { type: 'geojson', data: guardiaData })
-
-      // Halo púrpura pulsante
+      map.addSource('guardia', { type: 'geojson', data })
       map.addLayer({
-        id: 'guardia-halo',
-        type: 'circle',
-        source: 'guardia',
-        paint: {
-          'circle-radius': 14,
-          'circle-color': '#a855f7',
-          'circle-opacity': 0.25,
-        },
+        id: 'guardia-halo', type: 'circle', source: 'guardia',
+        paint: { 'circle-radius': 14, 'circle-color': '#a855f7', 'circle-opacity': 0.25 },
       })
-
-      // Punto central
       map.addLayer({
-        id: 'guardia-punto',
-        type: 'circle',
-        source: 'guardia',
+        id: 'guardia-punto', type: 'circle', source: 'guardia',
         paint: {
-          'circle-radius': 7,
-          'circle-color': '#a855f7',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2.5,
+          'circle-radius': 7, 'circle-color': '#a855f7',
+          'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5,
         },
       })
     }
@@ -296,7 +268,7 @@ function MapaRonda({ puntos, posGuardia }) {
 
   return (
     <div className="card overflow-hidden">
-      {/* Cabecera con toggle */}
+      {/* Cabecera con toggle ─────────────────────────────────────────────── */}
       <button
         className="w-full flex items-center justify-between px-4 py-3 text-left"
         onClick={() => setExpandido(v => !v)}
@@ -304,7 +276,9 @@ function MapaRonda({ puntos, posGuardia }) {
         <div className="flex items-center gap-2">
           <Map className="w-4 h-4 text-brand" />
           <span className="text-white font-semibold text-sm">Mapa de ronda</span>
-          <span className="text-[#94a3b8] text-xs">· {sorted.length} punto{sorted.length !== 1 ? 's' : ''}</span>
+          <span className="text-[#94a3b8] text-xs">
+            · {sorted.length} punto{sorted.length !== 1 ? 's' : ''}
+          </span>
         </div>
         <div className="flex items-center gap-3">
           {/* Leyenda desktop */}
@@ -327,13 +301,22 @@ function MapaRonda({ puntos, posGuardia }) {
       </button>
 
       {/*
-        ⚠️ IMPORTANTE: NO usar {expandido && <div>} aquí.
-        El div del mapa DEBE permanecer en el DOM siempre.
-        Si se desmonta, Mapbox pierde el contexto WebGL y no recarga al reabrirlo.
-        Usamos display:none / display:block para ocultar/mostrar.
+        ══════════════════════════════════════════════════════════════════════
+        COLAPSO CON max-height (NO display:none ni conditional rendering)
+        ──────────────────────────────────────────────────────────────────────
+        El div del mapa (mapContainer) SIEMPRE tiene height:320px real en DOM.
+        El PADRE usa max-height:0 + overflow:hidden para "clippear" visualmente.
+        Así Mapbox NUNCA ve un contenedor de 0×0 → tiles cargan correctamente.
+        ══════════════════════════════════════════════════════════════════════
       */}
-      <div style={{ display: expandido ? 'block' : 'none' }}>
-        {/* Canvas del mapa */}
+      <div
+        style={{
+          maxHeight:  expandido ? '400px' : '0',
+          overflow:   'hidden',
+          transition: 'max-height 0.3s ease',
+        }}
+      >
+        {/* Canvas del mapa — altura fija, SIEMPRE en DOM con dimensiones reales */}
         <div
           ref={mapContainer}
           style={{ height: '320px', width: '100%' }}
@@ -489,8 +472,8 @@ function QRScanner({ onResult, onClose }) {
 
 // ── Card de punto de control ──────────────────────────────────────────────────
 function PuntoCard({ punto, turnoId, guardiaId, ejecucionId, gps, radioGps, onVerificado }) {
-  const [expandido, setExpandido]   = useState(false)
-  const [mostrarQR, setMostrarQR]   = useState(false)
+  const [expandido, setExpandido] = useState(false)
+  const [mostrarQR, setMostrarQR] = useState(false)
 
   const { mutate: verificar, isPending } = useMutation({
     mutationFn: (payload) => rondasService.verificarPunto(payload),
@@ -505,11 +488,11 @@ function PuntoCard({ punto, turnoId, guardiaId, ejecucionId, gps, radioGps, onVe
   const verificarGPS = () => {
     if (!gps.pos) { toast.error('Sin señal GPS. Espere o use QR.'); return }
     verificar({
-      punto_control_id: punto.id,
-      turno_id:         turnoId,
-      guardia_id:       guardiaId,
-      ejecucion_id:     ejecucionId,
-      metodo:           'gps',
+      punto_control_id:    punto.id,
+      turno_id:            turnoId,
+      guardia_id:          guardiaId,
+      ejecucion_id:        ejecucionId,
+      metodo:              'gps',
       latitud_verificada:  gps.pos.lat,
       longitud_verificada: gps.pos.lng,
     })
@@ -579,7 +562,6 @@ function PuntoCard({ punto, turnoId, guardiaId, ejecucionId, gps, radioGps, onVe
 
         {expandido && (
           <div className="px-4 pb-4 pt-1 border-t border-white/5 space-y-3 animate-slide-up">
-            {/* Estado GPS */}
             <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${
               gps.pos   ? 'bg-green-500/10 text-green-400'  :
               gps.error ? 'bg-red-500/10 text-red-400'       :
@@ -646,8 +628,7 @@ function ProgresoTurno({ rondas_completadas_turno, rondas_por_turno, puntos_comp
 
       <div>
         <div className="flex justify-between text-xs text-[#94a3b8] mb-1">
-          <span>Rondas completadas</span>
-          <span>{pct}%</span>
+          <span>Rondas completadas</span><span>{pct}%</span>
         </div>
         <div className="h-3 bg-[#0f1929] rounded-full overflow-hidden">
           <div
@@ -709,7 +690,7 @@ export default function RondaPage() {
 
   const { data: turno, isLoading, error: turnoError, refetch } = useQuery({
     queryKey: ['ronda-turno-activo'],
-    queryFn: () => rondasService.turnoActivo().then(r => r.data),
+    queryFn:  () => rondasService.turnoActivo().then(r => r.data),
     refetchInterval: 30_000,
     retry: (count, err) => {
       if (err?.response?.status === 404) return false
@@ -742,7 +723,7 @@ export default function RondaPage() {
     qc.invalidateQueries({ queryKey: ['ronda-turno-activo'] })
   }, [qc])
 
-  // ── Estados de carga / error ─────────────────────────────────────────────
+  // ── Estados de carga / error ──────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -795,7 +776,7 @@ export default function RondaPage() {
 
   const todasCompletas = ejecucion?.rondas_completadas_turno >= ejecucion?.rondas_por_turno
 
-  // ── Render principal ─────────────────────────────────────────────────────
+  // ── Render principal ──────────────────────────────────────────────────────
   return (
     <div className="max-w-2xl mx-auto space-y-4 animate-slide-up pb-6">
 
@@ -820,7 +801,7 @@ export default function RondaPage() {
         </div>
         <div className="mt-3 flex items-center gap-2 text-xs text-[#94a3b8]">
           <Navigation className="w-3.5 h-3.5 text-brand" />
-          <span>Radio de verificación GPS: <strong className="text-white">{turno.radio_gps_metros}m</strong></span>
+          <span>Radio GPS: <strong className="text-white">{turno.radio_gps_metros}m</strong></span>
         </div>
       </div>
 
@@ -847,7 +828,7 @@ export default function RondaPage() {
         )}
       </div>
 
-      {/* ── Mapa: visible siempre que haya ejecución con puntos ──────────── */}
+      {/* ── Mapa: siempre visible cuando hay puntos ──────────────────────── */}
       {ejecucion?.puntos?.length > 0 && (
         <MapaRonda
           puntos={ejecucion.puntos}
@@ -855,7 +836,7 @@ export default function RondaPage() {
         />
       )}
 
-      {/* ── Todas las rondas completadas ────────────────────────────────── */}
+      {/* ── Todas las rondas completadas ─────────────────────────────────── */}
       {todasCompletas && (
         <>
           <ProgresoTurno
@@ -877,7 +858,7 @@ export default function RondaPage() {
         </>
       )}
 
-      {/* ── En descanso entre rondas ────────────────────────────────────── */}
+      {/* ── En descanso entre rondas ─────────────────────────────────────── */}
       {!todasCompletas && ejecucion && descansando && (
         <>
           <ProgresoTurno
@@ -896,7 +877,7 @@ export default function RondaPage() {
         </>
       )}
 
-      {/* ── Ronda pendiente (aún no iniciada) ───────────────────────────── */}
+      {/* ── Ronda pendiente (aún no iniciada) ────────────────────────────── */}
       {!todasCompletas && !descansando && ejecucion?.estado === 'pendiente' && (
         <>
           <ProgresoTurno
@@ -931,7 +912,7 @@ export default function RondaPage() {
         </>
       )}
 
-      {/* ── Ronda en progreso: lista de puntos ──────────────────────────── */}
+      {/* ── Ronda en progreso: lista de puntos ───────────────────────────── */}
       {!todasCompletas && !descansando && ejecucion?.estado === 'en_progreso' && (
         <>
           <ProgresoTurno
@@ -975,7 +956,7 @@ export default function RondaPage() {
         </>
       )}
 
-      {/* ── Sin ejecución disponible ────────────────────────────────────── */}
+      {/* ── Sin ejecución disponible ──────────────────────────────────────── */}
       {!todasCompletas && !descansando && !ejecucion && (
         <div className="card p-6 text-center space-y-3">
           <Clock className="w-10 h-10 text-[#94a3b8] mx-auto" />
