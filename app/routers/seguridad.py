@@ -22,9 +22,9 @@ from app.schemas.schemas import (
     GuardiaCreate, GuardiaUpdate, GuardiaOut,
     TurnoCreate, TurnoUpdate, TurnoOut, TurnoDetalleOut,
     AsistenciaOut, IncidenteCreate, IncidenteUpdate, IncidenteOut,
-    NotificacionOut, ArchivoIncidenteOut
+    NotificacionOut, ArchivoIncidenteOut,
+    RondaCreate, RondaOut, RondaUpdate,
 )
-from app.schemas.schemas import RondaCreate, RondaOut, RondaUpdate
 from app.services.seguridad_service import (
     generar_qr_token, verificar_gps, verificar_qr, progreso_ronda
 )
@@ -45,6 +45,10 @@ MIME_PERMITIDOS = {
 }
 MAX_BYTES = settings.MAX_UPLOAD_MB * 1024 * 1024
 
+JORNADAS_VALIDAS = {"full-time", "part-time", "hora-extra", "reemplazo"}
+ESTADOS_TURNO_VALIDOS = {"asignado", "activo", "completado", "cancelado", "inasistencia"}
+TIPOS_TURNO_VALIDOS = {"diurno", "nocturno", "mixto"}
+
 
 def _validar_archivo(archivo: UploadFile) -> None:
     ext = os.path.splitext(archivo.filename or "")[1].lower()
@@ -54,10 +58,8 @@ def _validar_archivo(archivo: UploadFile) -> None:
             f"Tipo de archivo no permitido ({ext}). "
             f"Permitidos: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}"
         )
-
     if archivo.content_type and archivo.content_type not in MIME_PERMITIDOS:
         raise HTTPException(400, f"Tipo MIME no permitido ({archivo.content_type}).")
-
     try:
         archivo.file.seek(0, os.SEEK_END)
         size = archivo.file.tell()
@@ -69,7 +71,6 @@ def _validar_archivo(archivo: UploadFile) -> None:
 
 
 def _guardar_archivo(archivo: UploadFile) -> tuple[str, str]:
-    """Guarda el archivo en disco y retorna (nombre_unico, ruta_relativa)."""
     ext = os.path.splitext(archivo.filename or "")[1].lower()
     nombre_unico = f"{uuid.uuid4()}{ext}"
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -78,6 +79,71 @@ def _guardar_archivo(archivo: UploadFile) -> tuple[str, str]:
     with open(ruta_fisica, "wb") as f:
         shutil.copyfileobj(archivo.file, f)
     return nombre_unico, f"/uploads/{nombre_unico}"
+
+
+# ── Validación de negocio para turnos ─────────────────────────────────────────
+
+def _validar_turno(
+    guardia_id: int,
+    fecha_inicio: datetime,
+    fecha_fin: datetime,
+    jornada: str,
+    db: Session,
+    exclude_turno_id: Optional[int] = None,
+) -> None:
+    """
+    Ejecuta las 3 reglas de negocio obligatorias antes de crear/actualizar un turno.
+    Lanza HTTPException 400 si alguna regla se viola.
+    """
+
+    # 1. Consistencia temporal: fin debe ser POSTERIOR al inicio
+    if fecha_fin <= fecha_inicio:
+        raise HTTPException(
+            status_code=400,
+            detail="La fecha/hora de fin debe ser posterior a la de inicio."
+        )
+
+    # 2. Restricciones de duración según jornada
+    duracion_horas = (fecha_fin - fecha_inicio).total_seconds() / 3600
+    jornada_norm = (jornada or "full-time").strip().lower()
+
+    if jornada_norm == "part-time" and duracion_horas > 5:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Jornada part-time no puede superar 5 horas continuas "
+                f"(duración calculada: {duracion_horas:.1f}h)."
+            )
+        )
+    if jornada_norm == "full-time" and duracion_horas > 12:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Jornada full-time no puede superar 12 horas continuas "
+                f"por normativa de fatiga (duración calculada: {duracion_horas:.1f}h)."
+            )
+        )
+
+    # 3. Solapamiento: el guardia no puede tener otro turno activo en ese rango
+    q = db.query(Turno).filter(
+        Turno.guardia_id == guardia_id,
+        Turno.estado.notin_(["cancelado", "completado", "inasistencia"]),
+        Turno.fecha_inicio < fecha_fin,
+        Turno.fecha_fin   > fecha_inicio,
+    )
+    if exclude_turno_id:
+        q = q.filter(Turno.id != exclude_turno_id)
+
+    solapado = q.first()
+    if solapado:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Solapamiento detectado: el guardia ya tiene el turno #{solapado.id} "
+                f"asignado en ese rango horario. "
+                f"Revise las fechas antes de continuar."
+            )
+        )
 
 
 # ── Instalaciones ──────────────────────────────────────────────────────────────
@@ -205,7 +271,6 @@ def regenerar_qr(punto_id: int, db: Session = Depends(get_db), _=Depends(require
 
 @router.get("/puntos-control/{punto_id}/qr-imagen")
 def qr_imagen(punto_id: int, db: Session = Depends(get_db), _=Depends(require_supervisor)):
-    """Genera y devuelve la imagen QR del punto de control."""
     import qrcode
     import io
     from fastapi.responses import StreamingResponse
@@ -235,17 +300,6 @@ def crear_verificacion(
     db: Session = Depends(get_db),
     current_user=Depends(require_any)
 ):
-    """
-    Crea una verificación de punto de control.
-    
-    Métodos aceptados:
-    - gps: requiere latitud_verificada + longitud_verificada
-    - qr: requiere qr_escaneado
-    - ambos: requiere ambos
-    
-    FIX: Si guardia_id no se envía, se infiere del turno.
-    """
-    # 1. Verificar que el punto exista
     punto = db.query(PuntoControl).filter(
         PuntoControl.id == data.punto_control_id,
         PuntoControl.activo == True
@@ -253,54 +307,39 @@ def crear_verificacion(
     if not punto:
         raise HTTPException(404, "Punto de control no encontrado o inactivo")
 
-    # 2. Verificar que el turno exista
     turno = db.query(Turno).filter(Turno.id == data.turno_id).first()
     if not turno:
         raise HTTPException(404, "Turno no encontrado")
 
-    # 3. FIX: Si guardia_id no llega, inferirlo del turno
-    guardia_id = data.guardia_id
+    guardia_id = data.guardia_id or turno.guardia_id
     if not guardia_id:
-        guardia_id = turno.guardia_id
-    if not guardia_id:
-        raise HTTPException(
-            422,
-            "No se pudo determinar el guardia. Envíe guardia_id en el payload."
-        )
+        raise HTTPException(422, "No se pudo determinar el guardia. Envíe guardia_id en el payload.")
 
-    # 4. Validar método y ejecutar verificación
     distancia = None
 
     if data.metodo in ("gps", "ambos"):
         if not data.latitud_verificada or not data.longitud_verificada:
-            raise HTTPException(
-                422,
-                "Para verificación GPS se requiere latitud_verificada y longitud_verificada"
-            )
+            raise HTTPException(422, "Para verificación GPS se requiere latitud_verificada y longitud_verificada")
         valido, distancia = verificar_gps(punto, data.latitud_verificada, data.longitud_verificada)
         if not valido:
             radio = punto.radio_metros or settings.CHECKPOINT_RADIO_METROS
             raise HTTPException(
                 400,
                 f"Fuera del rango GPS: estás a {distancia:.0f}m del punto "
-                f"(máximo permitido: {radio}m). "
-                f"Acércate más al punto de control."
+                f"(máximo permitido: {radio}m). Acércate más al punto de control."
             )
 
     if data.metodo in ("qr", "ambos"):
         if not data.qr_escaneado:
-            raise HTTPException(
-                422,
-                "Para verificación QR se requiere qr_escaneado"
-            )
+            raise HTTPException(422, "Para verificación QR se requiere qr_escaneado")
         if not verificar_qr(punto, data.qr_escaneado):
             raise HTTPException(400, "Código QR inválido o expirado")
 
-    # 5. Crear el registro
     verif = VerificacionPunto(
         punto_control_id=data.punto_control_id,
         turno_id=data.turno_id,
         guardia_id=guardia_id,
+        ejecucion_id=data.ejecucion_id,
         metodo=data.metodo,
         latitud_verificada=data.latitud_verificada,
         longitud_verificada=data.longitud_verificada,
@@ -491,10 +530,15 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
         "id": turno.id,
         "guardia_id": turno.guardia_id,
         "instalacion_id": turno.instalacion_id,
+        "ronda_id": turno.ronda_id,
         "fecha_inicio": turno.fecha_inicio,
         "fecha_fin": turno.fecha_fin,
         "estado": turno.estado,
+        "jornada": turno.jornada,
+        "tipo": turno.tipo,
         "notas": turno.notas,
+        "check_in_real": turno.check_in_real,
+        "check_out_real": turno.check_out_real,
         "created_at": turno.created_at,
         "instalacion": instalacion,
         "ronda": ronda,
@@ -522,8 +566,25 @@ def listar_turnos(
 
 
 @router.post("/turnos", response_model=TurnoOut, status_code=201)
-def crear_turno(data: TurnoCreate, db: Session = Depends(get_db), _=Depends(require_supervisor)):
-    turno = Turno(**data.model_dump())
+def crear_turno(
+    data: TurnoCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_supervisor)
+):
+    # ── Validaciones de negocio ───────────────────────────────────────────────
+    _validar_turno(
+        guardia_id=data.guardia_id,
+        fecha_inicio=data.fecha_inicio,
+        fecha_fin=data.fecha_fin,
+        jornada=data.jornada,
+        db=db,
+    )
+
+    payload = data.model_dump()
+    # dias_semana se maneja con property setter en el modelo
+    dias = payload.pop("dias_semana", None)
+    turno = Turno(**payload)
+    turno.dias_semana = dias
     db.add(turno)
     db.commit()
     db.refresh(turno)
@@ -531,12 +592,40 @@ def crear_turno(data: TurnoCreate, db: Session = Depends(get_db), _=Depends(requ
 
 
 @router.put("/turnos/{turno_id}", response_model=TurnoOut)
-def actualizar_turno(turno_id: int, data: TurnoUpdate, db: Session = Depends(get_db), _=Depends(require_any)):
+def actualizar_turno(
+    turno_id: int,
+    data: TurnoUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(require_any)
+):
     turno = db.query(Turno).filter(Turno.id == turno_id).first()
     if not turno:
         raise HTTPException(404, "Turno no encontrado")
-    for k, v in data.model_dump(exclude_none=True).items():
+
+    # Calcular los valores efectivos (campo actualizado o el existente)
+    nueva_inicio  = data.fecha_inicio or turno.fecha_inicio
+    nueva_fin     = data.fecha_fin    or turno.fecha_fin
+    nuevo_guardia = turno.guardia_id  # guardia no cambia en update
+    nueva_jornada = data.jornada      or turno.jornada
+
+    # Solo re-validar si cambia algo relevante
+    if data.fecha_inicio or data.fecha_fin or data.jornada:
+        _validar_turno(
+            guardia_id=nuevo_guardia,
+            fecha_inicio=nueva_inicio,
+            fecha_fin=nueva_fin,
+            jornada=nueva_jornada,
+            db=db,
+            exclude_turno_id=turno_id,
+        )
+
+    payload = data.model_dump(exclude_none=True)
+    dias = payload.pop("dias_semana", None)
+    for k, v in payload.items():
         setattr(turno, k, v)
+    if dias is not None:
+        turno.dias_semana = dias
+
     db.commit()
     db.refresh(turno)
     return turno
@@ -578,7 +667,8 @@ def registrar_entrada(
         longitud_entrada=lon,
     )
     db.add(asistencia)
-    turno.estado = "en_curso"
+    turno.estado = "activo"
+    turno.check_in_real = datetime.utcnow()
     db.commit()
     db.refresh(asistencia)
     return asistencia
@@ -592,17 +682,15 @@ def registrar_salida(turno_id: int, db: Session = Depends(get_db), _=Depends(req
     asistencia.salida = datetime.utcnow()
     turno = db.query(Turno).filter(Turno.id == turno_id).first()
     if turno:
-        turno.estado = "finalizado"
+        turno.estado = "completado"
+        turno.check_out_real = datetime.utcnow()
     db.commit()
     return asistencia
 
 
 # ── Incidentes ─────────────────────────────────────────────────────────────────
 
-
-
 def _get_incidente_completo(db: Session, incidente_id: int) -> Incidente:
-    """Re-consulta el incidente con sus relaciones cargadas para la respuesta."""
     return (
         db.query(Incidente)
         .options(
@@ -612,6 +700,7 @@ def _get_incidente_completo(db: Session, incidente_id: int) -> Incidente:
         .filter(Incidente.id == incidente_id)
         .first()
     )
+
 
 @router.get("/incidentes", response_model=List[IncidenteOut])
 def listar_incidentes(
@@ -637,7 +726,6 @@ def crear_incidente(data: IncidenteCreate, db: Session = Depends(get_db), curren
     db.add(incidente)
     db.flush()
 
-    # Notificar a supervisores y admins
     supervisores = db.query(Usuario).filter(
         Usuario.rol.in_(["admin", "supervisor"]),
         Usuario.activo == True
@@ -677,31 +765,20 @@ def actualizar_incidente(incidente_id: int, data: IncidenteUpdate, db: Session =
 )
 async def subir_archivos_incidente(
     incidente_id: int,
-    archivos: List[UploadFile] = File(..., description="Uno o más archivos adjuntos"),
+    archivos: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     _=Depends(require_any),
 ):
-    """
-    Sube uno o varios archivos a un incidente.
-    Acepta: imágenes (JPG, PNG, WEBP, GIF), PDF, DOC, DOCX, TXT.
-    Máximo definido por MAX_UPLOAD_MB en .env (defecto 10 MB por archivo).
-    """
     incidente = db.query(Incidente).filter(Incidente.id == incidente_id).first()
     if not incidente:
         raise HTTPException(404, "Incidente no encontrado")
-
     if not archivos:
         raise HTTPException(400, "Debe enviar al menos un archivo")
 
     registros: List[ArchivoIncidente] = []
-
     for archivo in archivos:
-        # Validar extensión
         _validar_archivo(archivo)
-
-        # Guardar en disco
         nombre_unico, ruta_relativa = _guardar_archivo(archivo)
-
         registro = ArchivoIncidente(
             incidente_id=incidente_id,
             nombre_archivo=archivo.filename,
@@ -714,7 +791,6 @@ async def subir_archivos_incidente(
     db.commit()
     for r in registros:
         db.refresh(r)
-
     return registros
 
 
@@ -746,21 +822,21 @@ def marcar_leida(notif_id: int, db: Session = Depends(get_db), current_user=Depe
 def dashboard_stats(db: Session = Depends(get_db), _=Depends(require_supervisor)):
     from sqlalchemy import func
     return {
-        "total_guardias":      db.query(Guardia).filter(Guardia.activo == True).count(),
-        "guardias_activos":    db.query(Guardia).filter(Guardia.activo == True).count(),
-        "total_instalaciones": db.query(Instalacion).filter(Instalacion.activa == True).count(),
+        "total_guardias":        db.query(Guardia).filter(Guardia.activo == True).count(),
+        "guardias_activos":      db.query(Guardia).filter(Guardia.activo == True).count(),
+        "total_instalaciones":   db.query(Instalacion).filter(Instalacion.activa == True).count(),
         "instalaciones_activas": db.query(Instalacion).filter(Instalacion.activa == True).count(),
-        "turnos_hoy":          db.query(Turno).filter(
-                                   func.date(Turno.fecha_inicio) == func.curdate()
-                               ).count(),
-        "incidentes_abiertos": db.query(Incidente).filter(
-                                   Incidente.estado.in_(["abierto", "reportado"])
-                               ).count(),
-        "incidentes_criticos": db.query(Incidente).filter(
-                                   Incidente.severidad == "critica",
-                                   Incidente.estado.notin_(["cerrado", "resuelto"])
-                               ).count(),
-        "verificaciones_hoy":  db.query(VerificacionPunto).filter(
-                                   func.date(VerificacionPunto.verificado_en) == func.curdate()
-                               ).count(),
+        "turnos_hoy":            db.query(Turno).filter(
+                                     func.date(Turno.fecha_inicio) == func.curdate()
+                                 ).count(),
+        "incidentes_abiertos":   db.query(Incidente).filter(
+                                     Incidente.estado.in_(["abierto", "reportado"])
+                                 ).count(),
+        "incidentes_criticos":   db.query(Incidente).filter(
+                                     Incidente.severidad == "critica",
+                                     Incidente.estado.notin_(["cerrado", "resuelto"])
+                                 ).count(),
+        "verificaciones_hoy":    db.query(VerificacionPunto).filter(
+                                     func.date(VerificacionPunto.verificado_en) == func.curdate()
+                                 ).count(),
     }

@@ -190,7 +190,7 @@ class PuntoControlOut(PuntoControlBase):
     model_config = {"from_attributes": True}
 
 
-# ── Ronda ─────────────────────────────────────────────────────────────────────
+# ── Ronda ──────────────────────────────────────────────────────────────────────
 
 class RondaBase(BaseModel):
     nombre: str
@@ -228,7 +228,8 @@ class VerificacionCreate(BaseModel):
     punto_control_id: int
     turno_id: int
     guardia_id: int
-    metodo: str
+    ejecucion_id: Optional[int] = None
+    metodo: str  # gps | qr | ambos
     latitud_verificada: Optional[float] = None
     longitud_verificada: Optional[float] = None
     qr_escaneado: Optional[str] = None
@@ -249,16 +250,28 @@ class VerificacionOut(BaseModel):
 
 # ── Turno ──────────────────────────────────────────────────────────────────────
 
+# Valores válidos de enums (documentación)
+# estado:  asignado | activo | completado | cancelado | inasistencia
+# jornada: full-time | part-time | hora-extra | reemplazo
+# tipo:    diurno | nocturno | mixto
+
 class TurnoBase(BaseModel):
-    guardia_id: int
+    guardia_id:    int
     instalacion_id: int
-    # ronda_id permite vincular una ronda al turno desde la creación/edición
-    ronda_id: Optional[int] = None
+    ronda_id:      Optional[int] = None
+
+    # Planificación teórica — el frontend envía ISO 8601 UTC
     fecha_inicio: datetime
-    fecha_fin: datetime
+    fecha_fin:    datetime
+
+    # Clasificación operativa
+    estado:  str = "asignado"
+    jornada: str = "full-time"
+    tipo:    str = "diurno"
+
+    # Patrón de repetición opcional
     dias_semana: Optional[List[str]] = None
-    notas: Optional[str] = None
-    estado: str = "programado"
+    notas:       Optional[str] = None
 
 
 class TurnoCreate(TurnoBase):
@@ -266,17 +279,23 @@ class TurnoCreate(TurnoBase):
 
 
 class TurnoUpdate(BaseModel):
-    estado: Optional[str] = None
-    notas: Optional[str] = None
-    fecha_inicio: Optional[datetime] = None
-    fecha_fin: Optional[datetime] = None
-    dias_semana: Optional[List[str]] = None
-    ronda_id: Optional[int] = None
+    ronda_id:      Optional[int] = None
+    fecha_inicio:  Optional[datetime] = None
+    fecha_fin:     Optional[datetime] = None
+    estado:        Optional[str] = None
+    jornada:       Optional[str] = None
+    tipo:          Optional[str] = None
+    dias_semana:   Optional[List[str]] = None
+    notas:         Optional[str] = None
+    # Auditoría de asistencia real
+    check_in_real:  Optional[datetime] = None
+    check_out_real: Optional[datetime] = None
 
 
 class TurnoOut(TurnoBase):
     id: int
-    estado: str
+    check_in_real:  Optional[datetime] = None
+    check_out_real: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -288,7 +307,8 @@ class PuntoControlRondaOut(PuntoControlOut):
 
 class TurnoDetalleOut(TurnoBase):
     id: int
-    estado: str
+    check_in_real:  Optional[datetime] = None
+    check_out_real: Optional[datetime] = None
     created_at: datetime
     instalacion: InstalacionOut
     ronda: Optional[RondaOut] = None
@@ -302,12 +322,12 @@ class TurnoDetalleOut(TurnoBase):
 
 class AsistenciaOut(BaseModel):
     id: int
-    turno_id: int
-    guardia_id: int
-    entrada: Optional[datetime] = None
-    salida: Optional[datetime] = None
+    turno_id:    int
+    guardia_id:  int
+    entrada:     Optional[datetime] = None
+    salida:      Optional[datetime] = None
     observacion: Optional[str] = None
-    created_at: datetime
+    created_at:  datetime
 
     model_config = {"from_attributes": True}
 
@@ -316,11 +336,11 @@ class AsistenciaOut(BaseModel):
 
 class ArchivoIncidenteOut(BaseModel):
     id: int
-    incidente_id: int
+    incidente_id:   int
     nombre_archivo: Optional[str] = None
-    ruta: str
-    tipo_mime: Optional[str] = None
-    subido_en: datetime
+    ruta:           str
+    tipo_mime:      Optional[str] = None
+    subido_en:      datetime
 
     model_config = {"from_attributes": True}
 
@@ -329,13 +349,13 @@ class ArchivoIncidenteOut(BaseModel):
 
 class IncidenteBase(BaseModel):
     instalacion_id: int
-    guardia_id: Optional[int] = None
-    turno_id: Optional[int] = None
-    titulo: str
-    descripcion: Optional[str] = None
-    severidad: str = "media"
-    latitud: Optional[float] = None
-    longitud: Optional[float] = None
+    guardia_id:     Optional[int] = None
+    turno_id:       Optional[int] = None
+    titulo:         str
+    descripcion:    Optional[str] = None
+    severidad:      str = "media"
+    latitud:        Optional[float] = None
+    longitud:       Optional[float] = None
 
 
 class IncidenteCreate(IncidenteBase):
@@ -343,19 +363,19 @@ class IncidenteCreate(IncidenteBase):
 
 
 class IncidenteUpdate(BaseModel):
-    titulo: Optional[str] = None
+    titulo:      Optional[str] = None
     descripcion: Optional[str] = None
-    severidad: Optional[str] = None
-    estado: Optional[str] = None
+    severidad:   Optional[str] = None
+    estado:      Optional[str] = None
 
 
 class IncidenteOut(IncidenteBase):
-    id: int
-    estado: str
+    id:          int
+    estado:      str
     reportado_en: datetime
     resuelto_en: Optional[datetime] = None
     instalacion: Optional[InstalacionOut] = None
-    archivos: List[ArchivoIncidenteOut] = []
+    archivos:    List[ArchivoIncidenteOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -363,11 +383,11 @@ class IncidenteOut(IncidenteBase):
 # ── Notificacion ───────────────────────────────────────────────────────────────
 
 class NotificacionOut(BaseModel):
-    id: int
-    titulo: str
-    mensaje: Optional[str] = None
-    leida: bool
-    tipo: str
+    id:         int
+    titulo:     str
+    mensaje:    Optional[str] = None
+    leida:      bool
+    tipo:       str
     created_at: datetime
 
     model_config = {"from_attributes": True}

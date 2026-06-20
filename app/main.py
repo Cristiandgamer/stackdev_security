@@ -29,6 +29,12 @@ def ensure_missing_columns():
             ("turnos",          "dias_semana",         "TEXT"),
             ("turnos",          "ronda_id",            "INT"),
             ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
+            # ── Nuevos campos del módulo de turnos refactorizado ─────────────
+            ("turnos",          "jornada",             "VARCHAR(20) DEFAULT 'full-time'"),
+            ("turnos",          "check_in_real",       "DATETIME"),
+            ("turnos",          "check_out_real",      "DATETIME"),
+            # ── Actualizar enum estado: asignado|activo|completado|cancelado|inasistencia
+            # (MySQL no migra ENUMs automáticamente — se usa VARCHAR(20) en el modelo)
             ("asistencias",     "latitud_salida",      "DOUBLE"),
             ("asistencias",     "longitud_salida",     "DOUBLE"),
             ("asistencias",     "distancia_entrada",   "DOUBLE"),
@@ -40,7 +46,6 @@ def ensure_missing_columns():
             ("asistencias",     "minutos_trabajados",  "INT"),
             ("asistencias",     "horas_extra",         "DOUBLE NOT NULL DEFAULT 0"),
             ("asistencias",     "observacion",         "TEXT"),
-            # ── Sistema de rondas reconstruido ──────────────────────────────
             ("instalaciones",   "radio_gps_metros",    "INT DEFAULT 15"),
             ("instalaciones",   "descripcion",         "TEXT"),
             ("instalaciones",   "ciudad",              "VARCHAR(100)"),
@@ -68,42 +73,7 @@ def ensure_missing_columns():
         conn.commit()
 
 
-def fill_null_defaults():
-    """
-    Rellena columnas que quedaron con NULL tras un ALTER TABLE ADD COLUMN.
-    MySQL no aplica el DEFAULT a filas existentes cuando la columna es nullable,
-    por eso este paso corre en cada arranque y es idempotente (no toca filas ya con valor).
-    """
-    updates = [
-        ("puntos_control", "radio_metros",            50),
-        ("instalaciones",  "radio_gps_metros",        15),
-        ("rondas",         "rondas_por_turno",         1),
-        ("rondas",         "descanso_entre_rondas_min", 60),
-        ("rondas",         "tiempo_maximo_ronda_min",   0),
-        ("asistencias",    "minutos_retraso",           0),
-        ("asistencias",    "horas_extra",               0),
-    ]
-    try:
-        with engine.connect() as conn:
-            for table, column, default_value in updates:
-                # Verificar que la columna existe antes de actualizar
-                exists = conn.execute(text(
-                    "SELECT COUNT(*) FROM information_schema.columns "
-                    "WHERE table_schema = DATABASE() "
-                    "AND table_name = :table AND column_name = :column"
-                ), {"table": table, "column": column}).scalar_one()
-                if exists:
-                    conn.execute(text(
-                        f"UPDATE {table} SET {column} = :val WHERE {column} IS NULL"
-                    ), {"val": default_value})
-            conn.commit()
-            logger.info("✓ Valores NULL corregidos con defaults")
-    except Exception as e:
-        logger.warning(f"No se pudieron corregir NULLs: {e}")
-
-
 def crear_tabla_ronda_ejecuciones():
-    """Crea la tabla ronda_ejecuciones si no existe (migración idempotente)."""
     try:
         with engine.connect() as conn:
             conn.execute(text("""
@@ -162,7 +132,6 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine, checkfirst=True)
         ensure_missing_columns()
-        fill_null_defaults()          # ← NUEVO: corrige NULLs en filas antiguas
         crear_tabla_ronda_ejecuciones()
         seed_config_asistencia()
         logger.info("✓ Tablas verificadas/creadas")
@@ -177,24 +146,22 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Stack Dev Security API",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
     docs_url="/api/docs" if os.getenv("ENVIRONMENT") != "production" else None,
     redoc_url=None,
     openapi_url="/api/openapi.json" if os.getenv("ENVIRONMENT") != "production" else None,
 )
 
-# ── 1. ProxyHeadersMiddleware ─────────────────────────────────────────────────
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# ── 2. TrustedHostMiddleware (OWASP A05) ──────────────────────────────────────
 _trusted_hosts = getattr(settings, "TRUSTED_HOSTS", [])
 if _trusted_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
 else:
     logger.warning("⚠ TRUSTED_HOSTS no configurado")
 
-# ── 3. Security Headers ───────────────────────────────────────────────────────
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -215,7 +182,7 @@ async def add_security_headers(request: Request, call_next):
         )
     return response
 
-# ── 4. CORS ───────────────────────────────────────────────────────────────────
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -224,25 +191,22 @@ app.add_middleware(
     allow_headers=settings.ALLOWED_HEADERS,
 )
 
-# ── API Routers ───────────────────────────────────────────────────────────────
-# rondas.router ANTES que seguridad.router para evitar que
-# /api/rondas/{ronda_id} capture rutas como /api/rondas/turno-activo
+# Rondas ANTES que seguridad (evita conflicto 422 en /turnos/turno-activo)
 app.include_router(auth.router,       prefix="/api/auth",       tags=["auth"])
 app.include_router(usuarios.router,   prefix="/api/usuarios",   tags=["usuarios"])
 app.include_router(rondas.router,     prefix="/api/rondas",     tags=["rondas"])
 app.include_router(seguridad.router,  prefix="/api",            tags=["seguridad"])
 app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistencia"])
 
-# ── Health check ──────────────────────────────────────────────────────────────
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "Stack Dev Security"}
+    return {"status": "ok", "app": "Stack Dev Security", "version": "2.2.0"}
 
-# ── Archivos subidos ──────────────────────────────────────────────────────────
+
 if os.path.exists(settings.UPLOAD_DIR):
     app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
-# ── Frontend SPA ──────────────────────────────────────────────────────────────
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "frontend", "dist",
@@ -250,7 +214,6 @@ FRONTEND_DIST = os.path.join(
 
 if os.path.exists(FRONTEND_DIST):
     logger.info(f"✓ Frontend encontrado en {FRONTEND_DIST}")
-
     assets_dir = os.path.join(FRONTEND_DIST, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
@@ -258,7 +221,6 @@ if os.path.exists(FRONTEND_DIST):
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         clean = full_path.lstrip("/")
-
         if clean:
             requested_path = os.path.abspath(os.path.join(FRONTEND_DIST, clean))
             frontend_root = os.path.abspath(FRONTEND_DIST)
@@ -266,14 +228,10 @@ if os.path.exists(FRONTEND_DIST):
                 if clean.startswith("api") or clean.startswith("uploads"):
                     return JSONResponse({"detail": "Not Found"}, status_code=404)
                 return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
-
             if os.path.isfile(requested_path):
                 return FileResponse(requested_path)
-
         if clean.startswith("api") or clean.startswith("uploads"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
-
 else:
     logger.warning(f"⚠ Frontend dist no encontrado en {FRONTEND_DIST}")
