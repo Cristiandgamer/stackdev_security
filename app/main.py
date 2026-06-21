@@ -139,6 +139,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error inicializando BD: {e}")
     try:
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+        logger.info(f"✓ Directorio de uploads listo: {os.path.abspath(settings.UPLOAD_DIR)}")
     except Exception as e:
         logger.warning(f"No se pudo crear directorio uploads: {e}")
     yield
@@ -146,7 +147,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Stack Dev Security API",
-    version="2.2.0",
+    version="2.2.1",
     lifespan=lifespan,
     docs_url="/api/docs" if os.getenv("ENVIRONMENT") != "production" else None,
     redoc_url=None,
@@ -201,11 +202,40 @@ app.include_router(asistencia.router, prefix="/api/asistencia", tags=["asistenci
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": "Stack Dev Security", "version": "2.2.0"}
+    """
+    Healthcheck. Incluye diagnóstico del directorio de uploads para
+    detectar rápido si el volumen persistente está montado y accesible
+    (por ejemplo tras agregar un Volume en Railway).
+    """
+    upload_path = os.path.abspath(settings.UPLOAD_DIR)
+    upload_exists = os.path.isdir(upload_path)
+    upload_writable = os.access(upload_path, os.W_OK) if upload_exists else False
+    archivos_count = len(os.listdir(upload_path)) if upload_exists else 0
+    return {
+        "status": "ok",
+        "app": "Stack Dev Security",
+        "version": "2.2.1",
+        "uploads": {
+            "path": upload_path,
+            "exists": upload_exists,
+            "writable": upload_writable,
+            "archivos_count": archivos_count,
+        },
+    }
 
 
-if os.path.exists(settings.UPLOAD_DIR):
-    app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# FIX: Garantizamos que el directorio exista ANTES de intentar montar
+# StaticFiles. Antes el mount era condicional (if os.path.exists(...))
+# y si por cualquier motivo el directorio no existía en el instante exacto
+# del arranque (por ejemplo al agregar un Volume nuevo en Railway), la ruta
+# /uploads quedaba completamente sin registrar y CUALQUIER archivo,
+# incluso los nuevos, devolvía 404 hasta el próximo reinicio del servicio.
+try:
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+except Exception as e:
+    logger.warning(f"No se pudo crear/verificar directorio uploads al montar: {e}")
+
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

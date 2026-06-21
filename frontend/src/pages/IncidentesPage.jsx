@@ -4,7 +4,7 @@ import {
   AlertTriangle, Plus, Filter, Upload, X,
   FileText, Image as ImageIcon, Video, File,
   ExternalLink, Download, MapPin, Building2, Calendar,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, ShieldAlert, UserX,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
@@ -595,6 +595,25 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
   )
 }
 
+// ── Aviso de cuenta no vinculada a Guardia ────────────────────────────────────
+function AvisoSinGuardia() {
+  return (
+    <div className="flex flex-col items-center text-center gap-4 py-4">
+      <div className="w-14 h-14 bg-red-500/15 rounded-2xl flex items-center justify-center">
+        <UserX className="w-7 h-7 text-red-400" />
+      </div>
+      <div>
+        <p className="text-white font-semibold text-lg">Cuenta no vinculada</p>
+        <p className="text-[#94a3b8] text-sm mt-2 leading-relaxed max-w-sm">
+          Tu cuenta de usuario aún no está vinculada a una ficha de guardia.
+          Para poder reportar incidentes, contacta al administrador para
+          que vincule tu cuenta en la sección de Guardias.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function IncidentesPage() {
   const [abrirForm, setAbrirForm]             = useState(false)
@@ -604,6 +623,10 @@ export default function IncidentesPage() {
   const { user } = useAuthStore()
   const isAdmin  = ['admin', 'supervisor'].includes(user?.rol)
 
+  // El backend ya filtra: admin/supervisor ven todos, usuario ve solo
+  // los suyos. No es necesario (ni seguro) replicar ese filtro en el
+  // cliente — el servidor es la única fuente de verdad sobre qué
+  // incidentes puede ver cada quien.
   const { data: incidentes, isLoading } = useQuery({
     queryKey: ['incidentes', filtroEstado, filtroSeveridad],
     queryFn: () => seguridadService.listarIncidentes({
@@ -619,23 +642,70 @@ export default function IncidentesPage() {
     select: (r) => Array.isArray(r?.data) ? r.data : [],
   })
 
+  // Verifica si el usuario actual tiene ficha de Guardia vinculada.
+  // Solo aplica a usuarios no-admin/supervisor, que son los que tienen
+  // la obligación de estar vinculados para poder reportar.
+  const { data: miFicha, isLoading: cargandoFicha } = useQuery({
+    queryKey: ['mi-ficha-guardia'],
+    queryFn: () => seguridadService.miFichaGuardia().then((r) => r.data),
+    enabled: !isAdmin,
+    retry: false,
+  })
+
+  const tieneGuardia = isAdmin || !!miFicha
+
+  const handleAbrirForm = () => {
+    if (!isAdmin && !cargandoFicha && !tieneGuardia) {
+      toast.error('Tu cuenta no está vinculada a una ficha de guardia. Contacta al administrador.')
+      return
+    }
+    setAbrirForm(true)
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-5 animate-slide-up">
 
-      <Modal open={abrirForm} onClose={() => setAbrirForm(false)} title="Reportar incidente" size="lg">
-        <NuevoIncidenteForm onClose={() => setAbrirForm(false)} instalaciones={instalaciones} />
+      <Modal
+        open={abrirForm}
+        onClose={() => setAbrirForm(false)}
+        title={tieneGuardia ? 'Reportar incidente' : 'Cuenta no vinculada'}
+        size="lg"
+      >
+        {tieneGuardia
+          ? <NuevoIncidenteForm onClose={() => setAbrirForm(false)} instalaciones={instalaciones} />
+          : <AvisoSinGuardia />}
       </Modal>
 
       <PageHeader
         icon={AlertTriangle}
         title="Incidentes"
-        subtitle="Reportar y gestionar incidentes de seguridad"
+        subtitle={isAdmin
+          ? 'Reportar y gestionar todos los incidentes de seguridad'
+          : 'Reportar y ver tus incidentes reportados'}
         action={
-          <button onClick={() => setAbrirForm(true)} className="btn-danger">
+          <button
+            onClick={handleAbrirForm}
+            disabled={!isAdmin && cargandoFicha}
+            className="btn-danger disabled:opacity-50"
+          >
             <Plus className="w-5 h-5" /> Reportar
           </button>
         }
       />
+
+      {/* Aviso persistente si el usuario no tiene ficha de guardia */}
+      {!isAdmin && !cargandoFicha && !tieneGuardia && (
+        <div className="card p-4 flex items-start gap-3 border-l-4 border-l-red-500">
+          <ShieldAlert className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-white font-medium text-sm">Cuenta no vinculada a guardia</p>
+            <p className="text-[#94a3b8] text-xs mt-1">
+              No podrás reportar incidentes hasta que el administrador vincule tu cuenta
+              a una ficha de guardia en la sección Guardias.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex gap-3 flex-wrap items-center">
@@ -663,9 +733,11 @@ export default function IncidentesPage() {
         <EmptyState
           icon={AlertTriangle}
           title="Sin incidentes"
-          description="No hay incidentes registrados con los filtros actuales."
+          description={isAdmin
+            ? 'No hay incidentes registrados con los filtros actuales.'
+            : 'Aún no has reportado ningún incidente.'}
           action={
-            <button onClick={() => setAbrirForm(true)} className="btn-danger">
+            <button onClick={handleAbrirForm} className="btn-danger">
               <Plus className="w-5 h-5" /> Reportar incidente
             </button>
           }

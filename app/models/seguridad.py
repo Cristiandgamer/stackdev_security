@@ -247,6 +247,12 @@ class Incidente(Base):
     id             = Column(Integer, primary_key=True, index=True)
     instalacion_id = Column(Integer, ForeignKey("instalaciones.id"), nullable=False, index=True)
     guardia_id     = Column(Integer, ForeignKey("guardias.id"), nullable=True, index=True)
+    # Usuario (cuenta de login) que reportó el incidente. Se asigna SIEMPRE
+    # automáticamente en el backend a partir del usuario autenticado —
+    # nunca se confía en lo que el cliente pueda enviar. Es la fuente más
+    # confiable de "quién reportó" porque no depende de que exista una
+    # ficha de Guardia vinculada (admin/supervisor también reportan).
+    usuario_reporta_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True, index=True)
     turno_id       = Column(Integer, ForeignKey("turnos.id"), nullable=True, index=True)
     titulo         = Column(String(200), nullable=False)
     descripcion    = Column(Text)
@@ -259,6 +265,7 @@ class Incidente(Base):
 
     instalacion = relationship("Instalacion")
     guardia     = relationship("Guardia")
+    usuario_reporta = relationship("Usuario")
     archivos    = relationship("ArchivoIncidente", back_populates="incidente")
 
 

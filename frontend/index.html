@@ -21,18 +21,11 @@
     <!-- Manifest PWA -->
     <link rel="manifest" href="/manifest.json">
     
-    <!-- Preload críticos -->
+
     <link rel="preconnect" href="https://api.mapbox.com">
     <link rel="preconnect" href="https://events.mapbox.com">
     <link rel="dns-prefetch" href="https://tiles.mapbox.com">
 
-    <!--
-      CSP (OWASP A05 — Security Misconfiguration):
-      - connect-src incluye el propio dominio de Railway explícitamente
-        para que axios pueda hacer fetch a /api/* sin ser bloqueado
-      - worker-src blob: requerido por Mapbox GL JS
-      - style-src unsafe-inline requerido por Tailwind en runtime
-    -->
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; connect-src 'self' https://stackdevsecurity-production.up.railway.app https://api.mapbox.com https://events.mapbox.com https://*.tiles.mapbox.com; img-src 'self' data: blob: https://*.tiles.mapbox.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src blob:; child-src blob:;" />
 

@@ -359,6 +359,9 @@ class IncidenteBase(BaseModel):
 
 
 class IncidenteCreate(IncidenteBase):
+    # guardia_id se ignora si el cliente lo envía: el backend SIEMPRE lo
+    # asigna automáticamente a partir del usuario autenticado, para que
+    # no se pueda falsificar quién reportó editando el request.
     pass
 
 
@@ -372,6 +375,7 @@ class IncidenteUpdate(BaseModel):
 class IncidenteOut(IncidenteBase):
     id:          int
     estado:      str
+    usuario_reporta_id: Optional[int] = None
     reportado_en: datetime
     resuelto_en: Optional[datetime] = None
     instalacion: Optional[InstalacionOut] = None

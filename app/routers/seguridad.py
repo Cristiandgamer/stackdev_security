@@ -370,6 +370,26 @@ def listar_guardias(db: Session = Depends(get_db), _=Depends(require_supervisor)
     return db.query(Guardia).filter(Guardia.activo == True).all()
 
 
+@router.get("/guardias/mi-ficha", response_model=Optional[GuardiaOut])
+def mi_ficha_guardia(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Devuelve la ficha de Guardia vinculada al usuario autenticado, o null
+    si aún no tiene una. Accesible para cualquier usuario logueado (no
+    requiere rol supervisor) porque solo expone los datos propios del
+    usuario, nunca el listado completo de guardias de la empresa.
+
+    El frontend usa este endpoint para decidir si debe mostrar el
+    formulario de "Reportar incidente" o el aviso de cuenta no vinculada.
+    """
+    return db.query(Guardia).filter(
+        Guardia.usuario_id == current_user.id,
+        Guardia.activo == True,
+    ).first()
+
+
 @router.post("/guardias", response_model=GuardiaOut, status_code=201)
 def crear_guardia(data: GuardiaCreate, db: Session = Depends(get_db), _=Depends(require_supervisor)):
     if not data.rut and not data.usuario_id:
@@ -707,12 +727,24 @@ def listar_incidentes(
     instalacion_id: Optional[int] = None,
     estado: Optional[str] = None,
     db: Session = Depends(get_db),
-    _=Depends(require_any)
+    current_user=Depends(get_current_user),
 ):
+    """
+    Admin y supervisor ven todos los incidentes.
+    Usuario (guardia) ve SOLO los incidentes que él mismo reportó.
+
+    El filtro se aplica siempre en el servidor — nunca se confía en
+    parámetros del cliente para decidir qué incidentes mostrar, así
+    no se puede burlar editando el request desde el navegador.
+    """
     q = db.query(Incidente).options(
         joinedload(Incidente.instalacion),
         joinedload(Incidente.archivos),
     )
+
+    if current_user.rol not in ("admin", "supervisor"):
+        q = q.filter(Incidente.usuario_reporta_id == current_user.id)
+
     if instalacion_id:
         q = q.filter(Incidente.instalacion_id == instalacion_id)
     if estado:
@@ -722,7 +754,47 @@ def listar_incidentes(
 
 @router.post("/incidentes", response_model=IncidenteOut, status_code=201)
 def crear_incidente(data: IncidenteCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    incidente = Incidente(**data.model_dump())
+    """
+    Crea un incidente. guardia_id y usuario_reporta_id se asignan SIEMPRE
+    en el backend a partir del usuario autenticado, nunca desde el payload
+    del cliente, para que no se pueda falsificar quién reportó.
+
+    Regla de negocio: un usuario con rol "usuario" (guardia operativo)
+    DEBE tener una ficha de Guardia vinculada a su cuenta para poder
+    reportar. Si no la tiene, se bloquea con un mensaje claro indicando
+    que debe contactar al administrador. Admin y supervisor pueden
+    reportar incidentes aunque no tengan ficha de Guardia (no son
+    operativos en ese sentido).
+    """
+    guardia_id_asignado = None
+
+    if current_user.rol not in ("admin", "supervisor"):
+        guardia = db.query(Guardia).filter(
+            Guardia.usuario_id == current_user.id,
+            Guardia.activo == True,
+        ).first()
+        if not guardia:
+            raise HTTPException(
+                403,
+                "Tu cuenta no está vinculada a una ficha de guardia. "
+                "Contacta al administrador para vincular tu cuenta antes de reportar incidentes."
+            )
+        guardia_id_asignado = guardia.id
+    else:
+        # Admin/supervisor: si tienen ficha de guardia igual la asociamos
+        # (por si también hacen rondas), pero no es obligatorio.
+        guardia_opcional = db.query(Guardia).filter(
+            Guardia.usuario_id == current_user.id,
+            Guardia.activo == True,
+        ).first()
+        if guardia_opcional:
+            guardia_id_asignado = guardia_opcional.id
+
+    payload = data.model_dump()
+    payload["guardia_id"] = guardia_id_asignado
+    payload["usuario_reporta_id"] = current_user.id
+
+    incidente = Incidente(**payload)
     db.add(incidente)
     db.flush()
 
@@ -767,11 +839,16 @@ async def subir_archivos_incidente(
     incidente_id: int,
     archivos: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    _=Depends(require_any),
+    current_user=Depends(get_current_user),
 ):
     incidente = db.query(Incidente).filter(Incidente.id == incidente_id).first()
     if not incidente:
         raise HTTPException(404, "Incidente no encontrado")
+
+    # Un usuario normal solo puede subir archivos a SUS PROPIOS incidentes.
+    if current_user.rol not in ("admin", "supervisor") and incidente.usuario_reporta_id != current_user.id:
+        raise HTTPException(403, "No tienes permiso para modificar este incidente")
+
     if not archivos:
         raise HTTPException(400, "Debe enviar al menos un archivo")
 

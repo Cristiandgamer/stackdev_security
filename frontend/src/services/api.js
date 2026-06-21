@@ -118,6 +118,9 @@ export const seguridadService = {
   eliminarRonda: (id) => api.delete(`/rondas/${id}`),
 
   listarGuardias: (params) => api.get("/guardias", { params }),
+  // Ficha de guardia del usuario autenticado (o null si no tiene).
+  // Usado por IncidentesPage para decidir si puede reportar.
+  miFichaGuardia: () => api.get("/guardias/mi-ficha"),
   crearGuardia: (d) => api.post("/guardias", d),
   actualizarGuardia: (id, d) => api.put(`/guardias/${id}`, d),
   eliminarGuardia: (id) => api.delete(`/guardias/${id}`),
