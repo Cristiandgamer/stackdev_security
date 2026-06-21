@@ -19,58 +19,92 @@ from app.routers import auth, usuarios, seguridad, asistencia, rondas
 
 
 def ensure_missing_columns():
-    with engine.connect() as conn:
-        checks = [
-            ("usuarios",        "apellido",            "VARCHAR(100)"),
-            ("usuarios",        "username",            "VARCHAR(80)"),
-            ("guardias",        "instalacion_id",      "INT"),
-            ("puntos_control",  "ronda_id",            "INT"),
-            ("puntos_control",  "radio_metros",        "INT DEFAULT 50"),
-            ("turnos",          "dias_semana",         "TEXT"),
-            ("turnos",          "ronda_id",            "INT"),
-            ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
-            # ── Nuevos campos del módulo de turnos refactorizado ─────────────
-            ("turnos",          "jornada",             "VARCHAR(20) DEFAULT 'full-time'"),
-            ("turnos",          "check_in_real",       "DATETIME"),
-            ("turnos",          "check_out_real",      "DATETIME"),
-            # ── Actualizar enum estado: asignado|activo|completado|cancelado|inasistencia
-            # (MySQL no migra ENUMs automáticamente — se usa VARCHAR(20) en el modelo)
-            ("asistencias",     "latitud_salida",      "DOUBLE"),
-            ("asistencias",     "longitud_salida",     "DOUBLE"),
-            ("asistencias",     "distancia_entrada",   "DOUBLE"),
-            ("asistencias",     "distancia_salida",    "DOUBLE"),
-            ("asistencias",     "foto_entrada",        "VARCHAR(500)"),
-            ("asistencias",     "foto_salida",         "VARCHAR(500)"),
-            ("asistencias",     "estado",              "VARCHAR(20) NOT NULL DEFAULT 'sin_marcar'"),
-            ("asistencias",     "minutos_retraso",     "INT NOT NULL DEFAULT 0"),
-            ("asistencias",     "minutos_trabajados",  "INT"),
-            ("asistencias",     "horas_extra",         "DOUBLE NOT NULL DEFAULT 0"),
-            ("asistencias",     "observacion",         "TEXT"),
-            ("instalaciones",   "radio_gps_metros",    "INT DEFAULT 15"),
-            ("instalaciones",   "descripcion",         "TEXT"),
-            ("instalaciones",   "ciudad",              "VARCHAR(100)"),
-            ("instalaciones",   "telefono",            "VARCHAR(30)"),
-            ("instalaciones",   "tipo",                "VARCHAR(30)"),
-            ("rondas",          "rondas_por_turno",    "INT DEFAULT 1 NOT NULL"),
-            ("rondas",          "descanso_entre_rondas_min", "INT DEFAULT 60 NOT NULL"),
-            ("rondas",          "tiempo_maximo_ronda_min",   "INT DEFAULT 0 NOT NULL"),
-            ("verificaciones_punto", "ejecucion_id",   "INT"),
-        ]
-        for table, column, ddl_type in checks:
-            result = conn.execute(text(
-                "SELECT COUNT(*) FROM information_schema.columns "
-                "WHERE table_schema = DATABASE() "
-                "AND table_name = :table AND column_name = :column"
-            ), {"table": table, "column": column})
-            if result.scalar_one() == 0:
-                logger.info(f"Agregando columna faltante: {table}.{column}")
-                ddl_type_sql = ddl_type.strip()
-                if not re.search(r"\bNOT\s+NULL\b|\bNULL\b", ddl_type_sql, re.I):
-                    ddl_type_sql = f"{ddl_type_sql} NULL"
-                conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type_sql}"
-                ))
-        conn.commit()
+    """
+    Agrega columnas faltantes de forma resiliente: cada columna se procesa
+    en su PROPIA transacción con su propio try/except. Antes, un fallo en
+    cualquier columna de la lista interrumpía el bucle completo (por estar
+    todo en un único bloque try/except a nivel de lifespan), dejando sin
+    crear todas las columnas que venían después en la lista — silenciosamente,
+    sin que el servidor fallara al arrancar. Esto causó que usuario_reporta_id
+    (la última columna de la lista) nunca se creara, rompiendo /incidentes y
+    /estadisticas/dashboard con 500 "Unknown column" pese a que el servidor
+    parecía funcionar con normalidad.
+    """
+    checks = [
+        ("usuarios",        "apellido",            "VARCHAR(100)"),
+        ("usuarios",        "username",            "VARCHAR(80)"),
+        ("guardias",        "instalacion_id",      "INT"),
+        ("puntos_control",  "ronda_id",            "INT"),
+        ("puntos_control",  "radio_metros",        "INT DEFAULT 50"),
+        ("turnos",          "dias_semana",         "TEXT"),
+        ("turnos",          "ronda_id",            "INT"),
+        ("turnos",          "tipo",                "VARCHAR(20) DEFAULT 'diurno'"),
+        # ── Nuevos campos del módulo de turnos refactorizado ─────────────
+        ("turnos",          "jornada",             "VARCHAR(20) DEFAULT 'full-time'"),
+        ("turnos",          "check_in_real",       "DATETIME"),
+        ("turnos",          "check_out_real",      "DATETIME"),
+        # ── Actualizar enum estado: asignado|activo|completado|cancelado|inasistencia
+        # (MySQL no migra ENUMs automáticamente — se usa VARCHAR(20) en el modelo)
+        ("asistencias",     "latitud_salida",      "DOUBLE"),
+        ("asistencias",     "longitud_salida",     "DOUBLE"),
+        ("asistencias",     "distancia_entrada",   "DOUBLE"),
+        ("asistencias",     "distancia_salida",    "DOUBLE"),
+        ("asistencias",     "foto_entrada",        "VARCHAR(500)"),
+        ("asistencias",     "foto_salida",         "VARCHAR(500)"),
+        ("asistencias",     "estado",              "VARCHAR(20) NOT NULL DEFAULT 'sin_marcar'"),
+        ("asistencias",     "minutos_retraso",     "INT NOT NULL DEFAULT 0"),
+        ("asistencias",     "minutos_trabajados",  "INT"),
+        ("asistencias",     "horas_extra",         "DOUBLE NOT NULL DEFAULT 0"),
+        ("asistencias",     "observacion",         "TEXT"),
+        ("instalaciones",   "radio_gps_metros",    "INT DEFAULT 15"),
+        ("instalaciones",   "descripcion",         "TEXT"),
+        ("instalaciones",   "ciudad",              "VARCHAR(100)"),
+        ("instalaciones",   "telefono",            "VARCHAR(30)"),
+        ("instalaciones",   "tipo",                "VARCHAR(30)"),
+        ("rondas",          "rondas_por_turno",    "INT DEFAULT 1 NOT NULL"),
+        ("rondas",          "descanso_entre_rondas_min", "INT DEFAULT 60 NOT NULL"),
+        ("rondas",          "tiempo_maximo_ronda_min",   "INT DEFAULT 0 NOT NULL"),
+        ("verificaciones_punto", "ejecucion_id",   "INT"),
+        # ── Trazabilidad de quién reportó cada incidente ─────────────────
+        ("incidentes",      "usuario_reporta_id",  "INT"),
+    ]
+
+    columnas_creadas = []
+    columnas_fallidas = []
+
+    for table, column, ddl_type in checks:
+        # Cada columna en su propia conexión/transacción: si una falla,
+        # las demás igual se intentan. Esto es lo que antes faltaba.
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() "
+                    "AND table_name = :table AND column_name = :column"
+                ), {"table": table, "column": column})
+                if result.scalar_one() == 0:
+                    logger.info(f"Agregando columna faltante: {table}.{column}")
+                    ddl_type_sql = ddl_type.strip()
+                    if not re.search(r"\bNOT\s+NULL\b|\bNULL\b", ddl_type_sql, re.I):
+                        ddl_type_sql = f"{ddl_type_sql} NULL"
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type_sql}"
+                    ))
+                    conn.commit()
+                    columnas_creadas.append(f"{table}.{column}")
+        except Exception as e:
+            columnas_fallidas.append(f"{table}.{column}")
+            logger.error(f"✗ No se pudo agregar columna {table}.{column}: {e}")
+            # Continuamos con la siguiente columna en vez de abortar todo el bucle.
+            continue
+
+    if columnas_creadas:
+        logger.info(f"✓ Columnas agregadas: {', '.join(columnas_creadas)}")
+    if columnas_fallidas:
+        logger.error(
+            f"⚠ Columnas que no se pudieron agregar (requieren revisión manual): "
+            f"{', '.join(columnas_fallidas)}"
+        )
 
 
 def crear_tabla_ronda_ejecuciones():
