@@ -140,6 +140,10 @@ export const seguridadService = {
 
   listarNotificaciones: (params) => api.get("/notificaciones", { params }),
   marcarLeida: (id) => api.post(`/notificaciones/${id}/leer`),
+  marcarTodasLeidas: () => api.post("/notificaciones/marcar-todas-leidas"),
+  eliminarNotificacion: (id) => api.delete(`/notificaciones/${id}`),
+  eliminarLeidas: () => api.delete("/notificaciones"),
+
 
   estadisticas: () => api.get("/estadisticas/dashboard"),
 };

@@ -533,8 +533,8 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
         {obtenGPS
           ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Obteniendo…</>
           : form.latitud
-            ? `📍 GPS: ${Number(form.latitud).toFixed(4)}, ${Number(form.longitud).toFixed(4)}`
-            : '📍 Capturar ubicación GPS (opcional)'}
+            ? `GPS: ${Number(form.latitud).toFixed(4)}, ${Number(form.longitud).toFixed(4)}`
+            : 'Capturar ubicación GPS (opcional)'}
       </button>
 
       {/* Zona de archivos */}

@@ -873,25 +873,40 @@ async def subir_archivos_incidente(
 
 # ── Notificaciones ─────────────────────────────────────────────────────────────
 
-@router.get("/notificaciones", response_model=List[NotificacionOut])
-def mis_notificaciones(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return db.query(Notificacion).filter(
-        Notificacion.usuario_id == current_user.id
-    ).order_by(Notificacion.created_at.desc()).limit(50).all()
+@router.post("/notificaciones/marcar-todas-leidas")
+def marcar_todas_leidas(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Marca como leídas todas las notificaciones del usuario actual."""
+    db.query(Notificacion).filter(
+        Notificacion.usuario_id == current_user.id,
+        Notificacion.leida == False
+    ).update({"leida": True}, synchronize_session=False)
+    db.commit()
+    return {"ok": True}
 
 
-@router.post("/notificaciones/{notif_id}/leer")
-def marcar_leida(notif_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.delete("/notificaciones/{notif_id}")
+def eliminar_notificacion(notif_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Elimina una notificación específica del usuario actual."""
     n = db.query(Notificacion).filter(
         Notificacion.id == notif_id,
         Notificacion.usuario_id == current_user.id
     ).first()
     if not n:
         raise HTTPException(404, "Notificación no encontrada")
-    n.leida = True
+    db.delete(n)
     db.commit()
     return {"ok": True}
 
+
+@router.delete("/notificaciones")
+def eliminar_notificaciones_leidas(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Elimina todas las notificaciones leídas del usuario actual (papelera)."""
+    db.query(Notificacion).filter(
+        Notificacion.usuario_id == current_user.id,
+        Notificacion.leida == True
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True}
 
 # ── Estadísticas ───────────────────────────────────────────────────────────────
 

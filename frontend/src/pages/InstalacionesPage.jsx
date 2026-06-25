@@ -1,12 +1,128 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, Plus, MapPin, QrCode, Pencil, Trash2, Eye } from 'lucide-react'
+import { Building2, Plus, MapPin, QrCode, Pencil, Trash2, Eye, Navigation, RefreshCw, CheckCircle2, WifiOff, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
 import { Modal, Spinner, PageHeader, EmptyState, ConfirmDialog } from '../components/index.jsx'
 import RondaModal from '../components/RondaModal'
 
 const TIPOS = ['oficina','residencial','comercial','industrial','educacional','salud','otro']
+
+// ── Captura de ubicación GPS ───────────────────────────────────────────────────
+// Reemplaza los campos manuales de Latitud/Longitud por un botón que captura
+// la posición real del dispositivo. Sigue el mismo patrón de useGPS usado en
+// AsistenciasPage.jsx y RondaPage.jsx para mantener consistencia en la app.
+// Es completamente opcional: la instalación se puede guardar sin GPS.
+function CapturarUbicacion({ latitud, longitud, onCapturar }) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState(null)
+  const [precision, setPrecision] = useState(null)
+
+  const tieneUbicacion = latitud !== '' && latitud != null && longitud !== '' && longitud != null
+
+  const capturar = () => {
+    if (!navigator.geolocation) {
+      setError('Tu navegador no soporta geolocalización. Ingresa las coordenadas en otro dispositivo o navegador.')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        onCapturar(pos.coords.latitude, pos.coords.longitude)
+        setPrecision(pos.coords.accuracy)
+        setLoading(false)
+        toast.success('Ubicación capturada')
+      },
+      (e) => {
+        const msgs = {
+          1: 'Permiso de ubicación denegado. Actívalo en la configuración de tu navegador para usar esta función.',
+          2: 'No se pudo obtener la ubicación. Verifica que el GPS esté activado.',
+          3: 'Tiempo de espera agotado al buscar señal GPS. Intenta nuevamente.',
+        }
+        setError(msgs[e.code] || 'No se pudo obtener la ubicación.')
+        setLoading(false)
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    )
+  }
+
+  const limpiar = () => {
+    onCapturar(null, null)
+    setPrecision(null)
+    setError(null)
+  }
+
+  return (
+    <div>
+      <label className="label">
+        Ubicación GPS
+        <span className="text-xs text-[#64748b] ml-2 font-normal">(opcional)</span>
+      </label>
+
+      {/* Estado: ya hay ubicación capturada (o cargada al editar) */}
+      {tieneUbicacion && !loading ? (
+        <div className="bg-[#0f1929] border border-green-500/30 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 bg-green-500/15 rounded-xl flex items-center justify-center flex-shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-green-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-green-400 text-sm font-semibold">Ubicación capturada</p>
+              <p className="text-white text-sm font-mono mt-0.5 truncate">
+                {Number(latitud).toFixed(6)}, {Number(longitud).toFixed(6)}
+              </p>
+              {precision != null && (
+                <p className="text-[#94a3b8] text-xs mt-0.5">Precisión: ±{Math.round(precision)}m</p>
+              )}
+              <a
+                href={`https://www.google.com/maps?q=${latitud},${longitud}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand text-xs hover:underline inline-block mt-1"
+              >
+                Ver en Google Maps →
+              </a>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={capturar} className="btn-secondary flex-1 !py-2.5 text-sm">
+              <RefreshCw className="w-4 h-4" /> Volver a capturar
+            </button>
+            <button type="button" onClick={limpiar} className="btn-ghost !py-2.5 text-sm">
+              Quitar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={capturar}
+          disabled={loading}
+          className="btn-secondary w-full disabled:opacity-60"
+        >
+          {loading ? (
+            <><Loader2 className="w-5 h-5 animate-spin" /> Obteniendo ubicación…</>
+          ) : (
+            <><MapPin className="w-5 h-5" /> Capturar ubicación GPS</>
+          )}
+        </button>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 mt-2 text-red-400 text-xs bg-red-500/10 rounded-xl px-3 py-2">
+          <WifiOff className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <p className="text-[#64748b] text-xs mt-1.5">
+        Captura tu ubicación actual estando físicamente en la instalación.
+        Se usa para validar el GPS de guardias en rondas y asistencia.
+      </p>
+    </div>
+  )
+}
 
 function FormInstalacion({ inicial, onClose, onSuccess }) {
   const [form, setForm] = useState(inicial || {
@@ -31,12 +147,16 @@ function FormInstalacion({ inicial, onClose, onSuccess }) {
     if (Object.keys(errs).length) return setErrors(errs)
     mutate({
       ...form,
-      latitud:  form.latitud  ? parseFloat(form.latitud)  : null,
-      longitud: form.longitud ? parseFloat(form.longitud) : null,
+      latitud:  form.latitud  !== '' && form.latitud  != null ? parseFloat(form.latitud)  : null,
+      longitud: form.longitud !== '' && form.longitud != null ? parseFloat(form.longitud) : null,
     })
   }
 
   const f = (k) => ({ value: form[k], onChange: e => { setForm(p => ({ ...p, [k]: e.target.value })); setErrors(p => ({ ...p, [k]: '' })) } })
+
+  const setUbicacion = (lat, lng) => {
+    setForm(p => ({ ...p, latitud: lat ?? '', longitud: lng ?? '' }))
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -76,16 +196,11 @@ function FormInstalacion({ inicial, onClose, onSuccess }) {
         <textarea className="input-field resize-none" rows={2} {...f('descripcion')} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="label">Latitud GPS</label>
-          <input className="input-field" type="number" step="any" placeholder="-29.9027" {...f('latitud')} />
-        </div>
-        <div>
-          <label className="label">Longitud GPS</label>
-          <input className="input-field" type="number" step="any" placeholder="-71.2519" {...f('longitud')} />
-        </div>
-      </div>
+      <CapturarUbicacion
+        latitud={form.latitud}
+        longitud={form.longitud}
+        onCapturar={setUbicacion}
+      />
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancelar</button>
@@ -285,6 +400,15 @@ export default function InstalacionesPage() {
 
               {inst.tipo && (
                 <span className="badge-blue capitalize">{inst.tipo}</span>
+              )}
+
+              {inst.latitud != null && inst.longitud != null && (
+                <div className="flex items-center gap-1 text-[#64748b] text-xs">
+                  <Navigation className="w-3 h-3 flex-shrink-0" />
+                  <span className="font-mono truncate">
+                    {Number(inst.latitud).toFixed(5)}, {Number(inst.longitud).toFixed(5)}
+                  </span>
+                </div>
               )}
 
               <div className="flex gap-2 pt-1">
