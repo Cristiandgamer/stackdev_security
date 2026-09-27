@@ -873,6 +873,20 @@ async def subir_archivos_incidente(
 
 # ── Notificaciones ─────────────────────────────────────────────────────────────
 
+@router.get("/notificaciones", response_model=List[NotificacionOut])
+def listar_notificaciones(
+    solo_no_leidas: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    query = db.query(Notificacion).filter(
+        Notificacion.usuario_id == current_user.id
+    )
+    if solo_no_leidas:
+        query = query.filter(Notificacion.leida == False)
+    return query.order_by(Notificacion.created_at.desc()).all()
+
+
 @router.post("/notificaciones/marcar-todas-leidas")
 def marcar_todas_leidas(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Marca como leídas todas las notificaciones del usuario actual."""
