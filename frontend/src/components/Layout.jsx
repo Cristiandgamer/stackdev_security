@@ -10,17 +10,17 @@ import toast from "react-hot-toast";
 import { useAuthStore } from "../store/authStore";
 import { seguridadService } from "../services/api";
 
-// Todos los paths ahora comienzan con /dashboard
+// Destinos alineados con las rutas declaradas en App.jsx.
 const navItems = [
-  { to: "/dashboard",               label: "Dashboard",     icon: LayoutDashboard, roles: ["admin","supervisor","usuario"] },
-  { to: "/dashboard/ronda",         label: "Ronda GPS+QR",  icon: MapPin,          roles: ["admin","supervisor","usuario"] },
-  { to: "/dashboard/incidentes",    label: "Incidentes",    icon: AlertTriangle,   roles: ["admin","supervisor","usuario"] },
-  { to: "/dashboard/guardias",      label: "Guardias",      icon: Users,           roles: ["admin","supervisor"] },
-  { to: "/dashboard/turnos",        label: "Turnos",        icon: Calendar,        roles: ["admin","supervisor"] },
-  { to: "/dashboard/rondas",        label: "Rondas",        icon: MapPin,          roles: ["admin","supervisor"] },
-  { to: "/dashboard/instalaciones", label: "Instalaciones", icon: Building2,       roles: ["admin","supervisor"] },
-  { to: "/dashboard/asistencias",   label: "Asistencias",   icon: ClipboardList,   roles: ["admin","supervisor","usuario"] },
-  { to: "/dashboard/usuarios",      label: "Usuarios",      icon: UserCog,         roles: ["admin"] },
+  { to: "/",               label: "Dashboard",     icon: LayoutDashboard, roles: ["admin","supervisor","usuario"] },
+  { to: "/ronda",          label: "Ronda GPS+QR",  icon: MapPin,          roles: ["admin","supervisor","usuario"] },
+  { to: "/incidentes",     label: "Incidentes",    icon: AlertTriangle,   roles: ["admin","supervisor","usuario"] },
+  { to: "/guardias",       label: "Guardias",      icon: Users,           roles: ["admin","supervisor"] },
+  { to: "/turnos",         label: "Turnos",        icon: Calendar,        roles: ["admin","supervisor"] },
+  { to: "/rondas",         label: "Rondas",        icon: MapPin,          roles: ["admin","supervisor"] },
+  { to: "/instalaciones",  label: "Instalaciones", icon: Building2,       roles: ["admin","supervisor"] },
+  { to: "/asistencias",    label: "Asistencias",   icon: ClipboardList,   roles: ["admin","supervisor","usuario"] },
+  { to: "/usuarios",       label: "Usuarios",      icon: UserCog,         roles: ["admin"] },
 ];
 
 // ── Dropdown de notificaciones ─────────────────────────────────────────────────
@@ -222,11 +222,11 @@ export default function Layout() {
   const handleLogout = () => { logout(); navigate("/login"); };
   const filtered = navItems.filter(n => n.roles.includes(user?.rol));
 
-  // end={true} solo en /dashboard exacto
+  // El dashboard corresponde a la ruta raíz.
   const NavItem = ({ to, label, icon: Icon, onClick }) => (
     <NavLink
       to={to}
-      end={to === "/dashboard"}
+      end={to === "/"}
       onClick={onClick}
       className={({ isActive }) =>
         `flex items-center gap-3 px-5 py-3 text-sm transition-colors rounded-xl mx-2 mb-0.5 ${
