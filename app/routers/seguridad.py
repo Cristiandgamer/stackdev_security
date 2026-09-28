@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse as FastAPIFileResponse
+from sqlalchemy import extract
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 import os, shutil, uuid, json
 
 from app.core.database import get_db
@@ -726,6 +727,10 @@ def _get_incidente_completo(db: Session, incidente_id: int) -> Incidente:
 def listar_incidentes(
     instalacion_id: Optional[int] = None,
     estado: Optional[str] = None,
+    severidad: Optional[str] = None,
+    fecha: Optional[date] = None,
+    mes: Optional[int] = Query(None, ge=1, le=12),
+    anio: Optional[int] = Query(None, ge=1900, le=9999),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -749,6 +754,30 @@ def listar_incidentes(
         q = q.filter(Incidente.instalacion_id == instalacion_id)
     if estado:
         q = q.filter(Incidente.estado == estado)
+    if severidad:
+        q = q.filter(Incidente.severidad == severidad)
+
+    if fecha:
+        inicio = datetime.combine(fecha, time.min)
+        q = q.filter(
+            Incidente.reportado_en >= inicio,
+            Incidente.reportado_en < inicio + timedelta(days=1),
+        )
+    else:
+        if anio and mes:
+            inicio = datetime(anio, mes, 1)
+            fin = datetime(anio + (mes == 12), 1 if mes == 12 else mes + 1, 1)
+            q = q.filter(
+                Incidente.reportado_en >= inicio,
+                Incidente.reportado_en < fin,
+            )
+        elif anio:
+            q = q.filter(
+                Incidente.reportado_en >= datetime(anio, 1, 1),
+                Incidente.reportado_en < datetime(anio + 1, 1, 1),
+            )
+        elif mes:
+            q = q.filter(extract("month", Incidente.reportado_en) == mes)
     return q.order_by(Incidente.reportado_en.desc()).limit(200).all()
 
 

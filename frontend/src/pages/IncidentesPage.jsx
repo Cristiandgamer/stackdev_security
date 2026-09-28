@@ -31,6 +31,7 @@ const ESTADO_BADGE = {
 
 const TIPOS      = ['seguridad', 'accidente', 'emergencia', 'otro']
 const SEVERIDADES = ['baja', 'media', 'alta', 'critica']
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 // Tipos MIME agrupados
 const ES_IMAGEN = (m = '') => /^image\//.test(m)
@@ -619,6 +620,9 @@ export default function IncidentesPage() {
   const [abrirForm, setAbrirForm]             = useState(false)
   const [filtroEstado, setFiltroEstado]       = useState('')
   const [filtroSeveridad, setFiltroSeveridad] = useState('')
+  const [filtroFecha, setFiltroFecha]         = useState('')
+  const [filtroMes, setFiltroMes]             = useState('')
+  const [filtroAnio, setFiltroAnio]           = useState('')
   const qc      = useQueryClient()
   const { user } = useAuthStore()
   const isAdmin  = ['admin', 'supervisor'].includes(user?.rol)
@@ -628,10 +632,13 @@ export default function IncidentesPage() {
   // cliente — el servidor es la única fuente de verdad sobre qué
   // incidentes puede ver cada quien.
   const { data: incidentes, isLoading } = useQuery({
-    queryKey: ['incidentes', filtroEstado, filtroSeveridad],
+    queryKey: ['incidentes', filtroEstado, filtroSeveridad, filtroFecha, filtroMes, filtroAnio],
     queryFn: () => seguridadService.listarIncidentes({
       estado:    filtroEstado    || undefined,
       severidad: filtroSeveridad || undefined,
+      fecha:     filtroFecha     || undefined,
+      mes:       filtroMes       || undefined,
+      anio:      filtroAnio      || undefined,
     }),
     select: (r) => Array.isArray(r?.data) ? r.data : [],
   })
@@ -724,6 +731,44 @@ export default function IncidentesPage() {
             <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
           )}
         </select>
+        <input
+          type="date"
+          aria-label="Filtrar incidentes por fecha"
+          className="input-field !w-auto !min-h-0 py-2 text-sm"
+          value={filtroFecha}
+          onChange={(e) => {
+            setFiltroFecha(e.target.value)
+            if (e.target.value) { setFiltroMes(''); setFiltroAnio('') }
+          }}
+        />
+        <select
+          aria-label="Filtrar incidentes por mes"
+          className="input-field !w-auto !min-h-0 py-2 text-sm"
+          value={filtroMes}
+          onChange={(e) => { setFiltroMes(e.target.value); setFiltroFecha('') }}
+        >
+          <option value="">Todos los meses</option>
+          {MESES.map((mes, index) => <option key={mes} value={index + 1}>{mes}</option>)}
+        </select>
+        <input
+          type="number"
+          aria-label="Filtrar incidentes por año"
+          placeholder="Año"
+          min="1900"
+          max="9999"
+          className="input-field !w-28 !min-h-0 py-2 text-sm"
+          value={filtroAnio}
+          onChange={(e) => { setFiltroAnio(e.target.value); setFiltroFecha('') }}
+        />
+        {(filtroFecha || filtroMes || filtroAnio) && (
+          <button
+            type="button"
+            className="btn-ghost !py-2 !px-3 text-sm"
+            onClick={() => { setFiltroFecha(''); setFiltroMes(''); setFiltroAnio('') }}
+          >
+            Limpiar fecha
+          </button>
+        )}
       </div>
 
       {/* Lista */}

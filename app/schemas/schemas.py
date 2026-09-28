@@ -132,6 +132,10 @@ class GuardiaOut(GuardiaBase):
 class InstalacionBase(BaseModel):
     nombre: str
     direccion: Optional[str] = None
+    ciudad: Optional[str] = None
+    tipo: Optional[str] = None
+    telefono: Optional[str] = None
+    descripcion: Optional[str] = None
     latitud: Optional[float] = None
     longitud: Optional[float] = None
 
