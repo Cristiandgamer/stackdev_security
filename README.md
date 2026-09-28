@@ -1,4 +1,4 @@
-# Stack Dev Security 🛡️
+# Stack Dev Security 
 
 Sistema de gestión de guardias de seguridad con rondas GPS + QR.
 

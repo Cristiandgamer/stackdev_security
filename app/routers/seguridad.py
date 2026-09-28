@@ -457,9 +457,13 @@ def eliminar_guardia(guardia_id: int, db: Session = Depends(get_db), _=Depends(r
 
 # ── Turnos ─────────────────────────────────────────────────────────────────────
 
-def _dia_actual_en_espanol() -> str:
+def _dia_en_espanol(fecha: datetime) -> str:
     dia_map = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-    return dia_map[datetime.utcnow().weekday()]
+    return dia_map[fecha.weekday()]
+
+
+def _dia_actual_en_espanol() -> str:
+    return _dia_en_espanol(datetime.utcnow())
 
 
 def _turno_valido_para_dia(turno: Turno, dia_actual: str) -> bool:
@@ -468,9 +472,10 @@ def _turno_valido_para_dia(turno: Turno, dia_actual: str) -> bool:
     return dia_actual in turno.dias_semana
 
 
-def _buscar_turno_valido(turnos, dia_actual: str):
+def _buscar_turno_valido(turnos, dia_actual: Optional[str] = None):
     for turno in turnos:
-        if _turno_valido_para_dia(turno, dia_actual):
+        dia = dia_actual or _dia_en_espanol(turno.fecha_inicio)
+        if _turno_valido_para_dia(turno, dia):
             return turno
     return None
 
@@ -507,7 +512,7 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
             Turno.estado.in_(["programado", "asignado"]),
             Turno.fecha_inicio >= ahora,
         ).order_by(Turno.fecha_inicio.asc()).all()
-        turno = _buscar_turno_valido(turnos, dia_actual)
+        turno = _buscar_turno_valido(turnos)
 
     if not turno:
         raise HTTPException(status_code=404, detail="No hay turno en curso")
