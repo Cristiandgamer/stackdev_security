@@ -50,6 +50,17 @@ const TIPO_CONFIG = {
 
 // ── Utilidades de fecha/hora ──────────────────────────────────────────────────
 
+const TURNO_TIME_ZONE = 'America/Santiago'
+const TURNO_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TURNO_TIME_ZONE,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+})
+const TURNO_OFFSET_FORMATTER = new Intl.DateTimeFormat('en', {
+  timeZone: TURNO_TIME_ZONE,
+  timeZoneName: 'longOffset',
+})
+
 /**
  * Agrega días a una string de fecha "YYYY-MM-DD" y retorna "YYYY-MM-DD".
  * Usa el constructor local para evitar desfases de zona horaria.
@@ -74,7 +85,21 @@ function toISO(fechaStr, horaStr) {
   if (!fechaStr || !horaStr) return null
   const [y, m, d] = fechaStr.split('-').map(Number)
   const [h, min]  = horaStr.split(':').map(Number)
-  return new Date(y, m - 1, d, h, min, 0).toISOString()
+  const localTimestamp = Date.UTC(y, m - 1, d, h, min)
+  let utcTimestamp = localTimestamp
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const offset = TURNO_OFFSET_FORMATTER
+      .formatToParts(new Date(utcTimestamp))
+      .find(part => part.type === 'timeZoneName')?.value
+    const match = /GMT([+-])(\d{2}):(\d{2})/.exec(offset || '')
+    const offsetMinutes = match
+      ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]))
+      : 0
+    utcTimestamp = localTimestamp - offsetMinutes * 60000
+  }
+
+  return new Date(utcTimestamp).toISOString()
 }
 
 /** Interpreta como UTC los timestamps sin zona que devuelve la base de datos. */
@@ -91,18 +116,16 @@ function parseServerDateTime(value) {
 function isoToDate(iso) {
   if (!iso) return ''
   const d = parseServerDateTime(iso)
-  return [
-    d.getFullYear(),
-    String(d.getMonth() + 1).padStart(2, '0'),
-    String(d.getDate()).padStart(2, '0'),
-  ].join('-')
+  const parts = Object.fromEntries(TURNO_DATE_TIME_FORMATTER.formatToParts(d).map(part => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
 }
 
 /** Extrae "HH:MM" (24h) de un DateTime del servidor. */
 function isoToTime(iso) {
   if (!iso) return ''
   const d = parseServerDateTime(iso)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const parts = Object.fromEntries(TURNO_DATE_TIME_FORMATTER.formatToParts(d).map(part => [part.type, part.value]))
+  return `${parts.hour}:${parts.minute}`
 }
 
 /**
@@ -137,6 +160,7 @@ function calcularDuracionHoras(inicio, fin) {
 function formatFecha(iso) {
   if (!iso) return '—'
   return parseServerDateTime(iso).toLocaleString('es-CL', {
+    timeZone: TURNO_TIME_ZONE,
     day: '2-digit', month: 'short',
     hour: '2-digit', minute: '2-digit',
   })
