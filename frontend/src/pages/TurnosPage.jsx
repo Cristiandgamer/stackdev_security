@@ -77,13 +77,20 @@ function toISO(fechaStr, horaStr) {
   return new Date(y, m - 1, d, h, min, 0).toISOString()
 }
 
+/** Interpreta como UTC los timestamps sin zona que devuelve la base de datos. */
+function parseServerDateTime(value) {
+  if (!value) return null
+  const timestamp = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`
+  return new Date(timestamp)
+}
+
 /**
  * Extrae "YYYY-MM-DD" de un DateTime del servidor (ISO 8601).
  * Usa el tiempo LOCAL del cliente para mostrar la fecha correcta.
  */
 function isoToDate(iso) {
   if (!iso) return ''
-  const d = new Date(iso)
+  const d = parseServerDateTime(iso)
   return [
     d.getFullYear(),
     String(d.getMonth() + 1).padStart(2, '0'),
@@ -94,7 +101,7 @@ function isoToDate(iso) {
 /** Extrae "HH:MM" (24h) de un DateTime del servidor. */
 function isoToTime(iso) {
   if (!iso) return ''
-  const d = new Date(iso)
+  const d = parseServerDateTime(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
@@ -122,14 +129,14 @@ function calcularTipo(horaInicio, horaFin, cruzaMedianoche) {
 /** Calcula la duración en horas entre dos datetime strings ISO. */
 function calcularDuracionHoras(inicio, fin) {
   if (!inicio || !fin) return null
-  const diff = (new Date(fin) - new Date(inicio)) / 3600000
+  const diff = (parseServerDateTime(fin) - parseServerDateTime(inicio)) / 3600000
   return diff > 0 ? diff : null
 }
 
 /** Formatea un datetime ISO para mostrar en la lista de turnos. */
 function formatFecha(iso) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString('es-CL', {
+  return parseServerDateTime(iso).toLocaleString('es-CL', {
     day: '2-digit', month: 'short',
     hour: '2-digit', minute: '2-digit',
   })
