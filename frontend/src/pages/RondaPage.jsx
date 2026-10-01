@@ -20,6 +20,7 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { rondasService } from '../services/api'
 import { Spinner, EmptyState } from '../components/index.jsx'
+import { formatChileTime } from '../utils/time.js'
 
 // Token a nivel de módulo — disponible antes de cualquier render
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -760,9 +761,9 @@ export default function RondaPage() {
           <p className="text-white font-bold text-xl mb-1">Turno activo</p>
           <p className="text-[#94a3b8]">{turno.instalacion_nombre}</p>
           <p className="text-[#94a3b8] text-sm mt-1">
-            {new Date(turno.fecha_inicio).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+            {formatChileTime(turno.fecha_inicio)}
             {' — '}
-            {new Date(turno.fecha_fin).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+            {formatChileTime(turno.fecha_fin)}
           </p>
         </div>
         <EmptyState
@@ -790,9 +791,9 @@ export default function RondaPage() {
               <p className="text-[#94a3b8] text-sm">{turno.instalacion_direccion}</p>
             )}
             <p className="text-[#94a3b8] text-sm mt-1">
-              {new Date(turno.fecha_inicio).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+              {formatChileTime(turno.fecha_inicio)}
               {' — '}
-              {new Date(turno.fecha_fin).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+              {formatChileTime(turno.fecha_fin)}
             </p>
           </div>
           {turno.ronda_nombre && (

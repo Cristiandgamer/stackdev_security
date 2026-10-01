@@ -19,6 +19,7 @@ import toast from 'react-hot-toast'
 import { seguridadService, rondasService } from '../services/api'
 import { Modal, Spinner, PageHeader, EmptyState, ConfirmDialog } from '../components/index.jsx'
 import RondaModal from '../components/RondaModal'
+import { formatChileDateOnly, formatChileTime, getChileDateString } from '../utils/time.js'
 
 function errMsg(e) {
   const detail = e?.response?.data?.detail
@@ -219,7 +220,7 @@ function RondaCard({ ronda, onEditar, onEliminar }) {
 // ── Monitor de ejecuciones ────────────────────────────────────────────────────
 function MonitorEjecuciones({ instalaciones }) {
   const [instalacionId, setInstalacionId] = useState('')
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = getChileDateString()
 
   const { data: turnos, isLoading, refetch } = useQuery({
     queryKey: ['turnos-hoy', instalacionId],
@@ -231,7 +232,7 @@ function MonitorEjecuciones({ instalaciones }) {
 
   // Filtra turnos de hoy
   const turnosHoy = (turnos || []).filter(t => {
-    const fechaT = new Date(t.fecha_inicio).toISOString().slice(0, 10)
+    const fechaT = formatChileDateOnly(t.fecha_inicio)
     return fechaT === hoy
   })
 
@@ -310,9 +311,9 @@ function ResumenTurnoRow({ turno }) {
             </span>
           </div>
           <p className="text-[#94a3b8] text-xs mt-0.5">
-            {new Date(turno.fecha_inicio).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+            {formatChileTime(turno.fecha_inicio)}
             {' — '}
-            {new Date(turno.fecha_fin).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+            {formatChileTime(turno.fecha_fin)}
           </p>
         </div>
         {expandido ? <ChevronUp className="w-4 h-4 text-[#94a3b8]" /> : <ChevronDown className="w-4 h-4 text-[#94a3b8]" />}
@@ -387,7 +388,7 @@ function ResumenTurnoRow({ turno }) {
 
               {resumen.ultima_completada_en && (
                 <p className="text-[#475569] text-xs">
-                  Última completada: {new Date(resumen.ultima_completada_en).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+                  Última completada: {formatChileTime(resumen.ultima_completada_en)}
                 </p>
               )}
             </div>

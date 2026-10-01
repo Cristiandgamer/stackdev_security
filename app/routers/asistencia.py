@@ -9,10 +9,8 @@ FIXES en esta version:
    asistencia directamente por guardia_id + turno_id, y la ventana de busqueda
    del turno se amplio a ±6h para absorber desfases de zona horaria.
 
-2. dashboard_live: usaba datetime.utcnow().date() para determinar "hoy", lo
-   que en Chile (UTC-4) produce una fecha incorrecta hasta 4 horas del dia.
-   Ahora calcula la fecha local chilena con el offset correcto y luego
-   convierte el rango del dia a UTC para compararlo con los turnos en DB.
+2. dashboard_live: calcula "hoy" y sus límites con America/Santiago, y luego
+    consulta el intervalo UTC correspondiente a los turnos almacenados.
 """
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
@@ -27,6 +25,14 @@ import math, uuid, os, shutil, io, logging
 from app.core.database import get_db
 from app.core.security import require_any, require_supervisor, require_admin, get_current_user
 from app.core.config import settings
+from app.core.timezone import (
+    CHILE_TIME_ZONE,
+    chile_date_utc_range,
+    chile_today,
+    to_utc_naive,
+    utc_naive_to_chile,
+    utc_now_naive,
+)
 from app.models.seguridad import (
     Asistencia, Turno, Guardia, Instalacion,
     Notificacion
@@ -37,22 +43,14 @@ from app.models.usuario import Usuario
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Offset fijo Chile (UTC-4 invierno, UTC-3 verano).
-# En junio Chile esta en invierno -> UTC-4.
-# Si en el futuro cambia el horario de verano, ajustar este valor
-# o leerlo desde una variable de entorno CHILE_UTC_OFFSET=-4
-CHILE_UTC_OFFSET = int(os.getenv("CHILE_UTC_OFFSET", "-4"))
-CHILE_OFFSET = timedelta(hours=CHILE_UTC_OFFSET)
-
-
 def ahora_utc() -> datetime:
-    """Retorna datetime.utcnow() naive — unico punto de entrada para 'ahora'."""
-    return datetime.utcnow()
+    """Retorna la hora UTC naive que usan las columnas DATETIME de MySQL."""
+    return utc_now_naive()
 
 
 def fecha_local_chile() -> datetime:
     """Hora actual en zona horaria Chile (naive, sin tzinfo)."""
-    return datetime.utcnow() + CHILE_OFFSET
+    return datetime.now(CHILE_TIME_ZONE).replace(tzinfo=None)
 
 
 def rango_dia_utc(fecha_chile=None):
@@ -61,14 +59,7 @@ def rango_dia_utc(fecha_chile=None):
     Los turnos en la DB estan en UTC, asi que el rango debe ser UTC
     equivalente al inicio y fin del dia en Chile.
     """
-    if fecha_chile is None:
-        fecha_chile = fecha_local_chile().date()
-    # Medianoche Chile en UTC = medianoche Chile + offset inverso
-    inicio = datetime(fecha_chile.year, fecha_chile.month, fecha_chile.day,
-                      0, 0, 0) - CHILE_OFFSET
-    fin    = datetime(fecha_chile.year, fecha_chile.month, fecha_chile.day,
-                      23, 59, 59) - CHILE_OFFSET
-    return inicio, fin
+    return chile_date_utc_range(fecha_chile or chile_today())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -495,10 +486,8 @@ def dashboard_live(
     """
     Retorna el estado de todos los turnos del día con su asistencia.
 
-    FIX: antes usaba datetime.utcnow().date() para determinar 'hoy', lo que
-    en Chile (UTC-4) produce una fecha incorrecta hasta 4h del dia.
-    Ahora calcula la fecha local chilena y convierte el rango a UTC para
-    compararlo correctamente con los turnos almacenados en UTC en la DB.
+    Usa el calendario America/Santiago y consulta el intervalo UTC exacto del
+    día seleccionado, incluyendo el cambio estacional de Chile.
     """
     if fecha:
         try:
@@ -521,7 +510,7 @@ def dashboard_live(
         )
         .filter(
             Turno.fecha_inicio >= inicio_dia,
-            Turno.fecha_inicio <= fin_dia,
+            Turno.fecha_inicio < fin_dia,
         )
     )
     if instalacion_id:
@@ -579,7 +568,7 @@ def estadisticas(
         func.sum(func.coalesce(Asistencia.minutos_retraso, 0)),
         func.sum(func.coalesce(Asistencia.minutos_trabajados, 0)),
         func.sum(func.coalesce(Asistencia.horas_extra, 0) * 60),
-    ).outerjoin(Asistencia).filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio <= ff)
+    ).outerjoin(Asistencia).filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio < ff)
 
     if guardia_id:
         q = q.filter(Turno.guardia_id == guardia_id)
@@ -639,17 +628,19 @@ def ajuste_manual(
     if data.observacion is not None:
         a.observacion = data.observacion
     if data.entrada:
-        a.entrada = data.entrada
+        entrada_utc = to_utc_naive(data.entrada)
+        a.entrada = entrada_utc
         turno = db.query(Turno).filter(Turno.id == a.turno_id).first()
         if turno:
             cfg = _get_config(db)
             a.estado, a.minutos_retraso = _calcular_estado(
-                data.entrada, turno.fecha_inicio, cfg.tolerancia_tardanza_min
+                entrada_utc, turno.fecha_inicio, cfg.tolerancia_tardanza_min
             )
     if data.salida:
-        a.salida = data.salida
+        salida_utc = to_utc_naive(data.salida)
+        a.salida = salida_utc
         if a.entrada:
-            a.minutos_trabajados = int((data.salida - a.entrada).total_seconds() / 60)
+            a.minutos_trabajados = int((salida_utc - a.entrada).total_seconds() / 60)
 
     db.commit()
     db.refresh(a)
@@ -689,7 +680,7 @@ def listar_asistencias(
         try:
             ff_date = datetime.strptime(fecha_fin, "%Y-%m-%d").date()
             _, ff = rango_dia_utc(ff_date)
-            q = q.filter(Asistencia.entrada <= ff)
+            q = q.filter(Asistencia.entrada < ff)
         except ValueError:
             pass
     if instalacion_id:
@@ -727,7 +718,7 @@ def exportar_asistencias(
             joinedload(Asistencia.turno).joinedload(Turno.instalacion),
         )
         .join(Turno)
-        .filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio <= ff)
+        .filter(Turno.fecha_inicio >= fi, Turno.fecha_inicio < ff)
     )
     if guardia_id:
         q = q.filter(Asistencia.guardia_id == guardia_id)
@@ -740,7 +731,7 @@ def exportar_asistencias(
         if not dt:
             return ""
         # Mostrar en hora local Chile para los reportes
-        dt_chile = dt + CHILE_OFFSET
+        dt_chile = utc_naive_to_chile(dt)
         return dt_chile.strftime("%d/%m/%Y %H:%M")
 
     def _horas(mins):
@@ -754,7 +745,7 @@ def exportar_asistencias(
         t   = a.turno
         ins = t.instalacion if t else None
         # Mostrar fecha del turno en hora local Chile
-        fecha_turno_chile = (t.fecha_inicio + CHILE_OFFSET) if t else None
+        fecha_turno_chile = utc_naive_to_chile(t.fecha_inicio) if t else None
         filas.append({
             "RUT":              g.rut if g else "",
             "Nombre":           f"{g.nombre} {g.apellido}" if g else "",

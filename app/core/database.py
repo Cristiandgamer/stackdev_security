@@ -17,6 +17,7 @@ def create_engine_with_retry(url: str, retries: int = 10, delay: int = 5):
                 max_overflow=20,
                 pool_recycle=280,
                 pool_pre_ping=True,
+                connect_args={"init_command": "SET time_zone = '+00:00'"},
                 echo=False,
             )
             # Verificar conexión real

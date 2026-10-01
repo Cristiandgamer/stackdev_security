@@ -10,6 +10,7 @@ import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { Modal, Spinner, PageHeader, EmptyState } from '../components/index.jsx'
+import { formatChileDateTime } from '../utils/time.js'
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -41,11 +42,9 @@ const ES_PDF    = (m = '') => m === 'application/pdf'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatFecha(valor, opts = {}) {
-  if (!valor) return '—'
-  const d = new Date(valor)
-  if (isNaN(d.getTime())) return '—'
-  const def = { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }
-  return d.toLocaleString('es-CL', { ...def, ...opts })
+  return formatChileDateTime(valor, {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', ...opts,
+  })
 }
 
 /** Construye la URL absoluta de un archivo guardado en /uploads */

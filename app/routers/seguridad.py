@@ -3,12 +3,19 @@ from fastapi.responses import FileResponse as FastAPIFileResponse
 from sqlalchemy import extract
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 import os, shutil, uuid, json
 
 from app.core.database import get_db
 from app.core.security import require_any, require_supervisor, require_admin, get_current_user
 from app.core.config import settings
+from app.core.timezone import (
+    chile_date_utc_range,
+    chile_today,
+    to_utc_naive,
+    utc_naive_to_chile,
+    utc_now_naive,
+)
 from app.models.seguridad import (
     Instalacion, PuntoControl, VerificacionPunto,
     Guardia, Turno, Asistencia, Incidente,
@@ -459,11 +466,11 @@ def eliminar_guardia(guardia_id: int, db: Session = Depends(get_db), _=Depends(r
 
 def _dia_en_espanol(fecha: datetime) -> str:
     dia_map = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-    return dia_map[fecha.weekday()]
+    return dia_map[utc_naive_to_chile(fecha).weekday()]
 
 
 def _dia_actual_en_espanol() -> str:
-    return _dia_en_espanol(datetime.utcnow())
+    return _dia_en_espanol(utc_now_naive())
 
 
 def _turno_valido_para_dia(turno: Turno, dia_actual: str) -> bool:
@@ -492,11 +499,11 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
         Turno.guardia_id == guardia.id,
         Turno.estado.in_(["en_curso", "activo"])
     ).first()
-    if turno and not _turno_valido_para_dia(turno, dia_actual):
+    if turno and not _turno_valido_para_dia(turno, _dia_en_espanol(turno.fecha_inicio)):
         turno = None
 
     if not turno:
-        ahora = datetime.utcnow()
+        ahora = utc_now_naive()
         turnos = db.query(Turno).filter(
             Turno.guardia_id == guardia.id,
             Turno.estado.in_(["programado", "asignado"]),
@@ -506,7 +513,7 @@ def turno_mi_activo(db: Session = Depends(get_db), current_user=Depends(get_curr
         turno = _buscar_turno_valido(turnos, dia_actual)
 
     if not turno:
-        ahora = datetime.utcnow()
+        ahora = utc_now_naive()
         turnos = db.query(Turno).filter(
             Turno.guardia_id == guardia.id,
             Turno.estado.in_(["programado", "asignado"]),
@@ -597,16 +604,21 @@ def crear_turno(
     db: Session = Depends(get_db),
     _=Depends(require_supervisor)
 ):
+    fecha_inicio = to_utc_naive(data.fecha_inicio)
+    fecha_fin = to_utc_naive(data.fecha_fin)
+
     # ── Validaciones de negocio ───────────────────────────────────────────────
     _validar_turno(
         guardia_id=data.guardia_id,
-        fecha_inicio=data.fecha_inicio,
-        fecha_fin=data.fecha_fin,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
         jornada=data.jornada,
         db=db,
     )
 
     payload = data.model_dump()
+    payload["fecha_inicio"] = fecha_inicio
+    payload["fecha_fin"] = fecha_fin
     # dias_semana se maneja con property setter en el modelo
     dias = payload.pop("dias_semana", None)
     turno = Turno(**payload)
@@ -628,14 +640,19 @@ def actualizar_turno(
     if not turno:
         raise HTTPException(404, "Turno no encontrado")
 
+    payload = data.model_dump(exclude_none=True)
+    for field in ("fecha_inicio", "fecha_fin", "check_in_real", "check_out_real"):
+        if field in payload:
+            payload[field] = to_utc_naive(payload[field])
+
     # Calcular los valores efectivos (campo actualizado o el existente)
-    nueva_inicio  = data.fecha_inicio or turno.fecha_inicio
-    nueva_fin     = data.fecha_fin    or turno.fecha_fin
+    nueva_inicio  = payload.get("fecha_inicio", turno.fecha_inicio)
+    nueva_fin     = payload.get("fecha_fin", turno.fecha_fin)
     nuevo_guardia = turno.guardia_id  # guardia no cambia en update
     nueva_jornada = data.jornada      or turno.jornada
 
     # Solo re-validar si cambia algo relevante
-    if data.fecha_inicio or data.fecha_fin or data.jornada:
+    if "fecha_inicio" in payload or "fecha_fin" in payload or data.jornada:
         _validar_turno(
             guardia_id=nuevo_guardia,
             fecha_inicio=nueva_inicio,
@@ -645,7 +662,6 @@ def actualizar_turno(
             exclude_turno_id=turno_id,
         )
 
-    payload = data.model_dump(exclude_none=True)
     dias = payload.pop("dias_semana", None)
     for k, v in payload.items():
         setattr(turno, k, v)
@@ -685,16 +701,17 @@ def registrar_entrada(
     existente = db.query(Asistencia).filter(Asistencia.turno_id == turno_id).first()
     if existente:
         raise HTTPException(400, "Ya existe asistencia para este turno")
+    ahora = utc_now_naive()
     asistencia = Asistencia(
         turno_id=turno_id,
         guardia_id=turno.guardia_id,
-        entrada=datetime.utcnow(),
+        entrada=ahora,
         latitud_entrada=lat,
         longitud_entrada=lon,
     )
     db.add(asistencia)
     turno.estado = "activo"
-    turno.check_in_real = datetime.utcnow()
+    turno.check_in_real = ahora
     db.commit()
     db.refresh(asistencia)
     return asistencia
@@ -705,11 +722,12 @@ def registrar_salida(turno_id: int, db: Session = Depends(get_db), _=Depends(req
     asistencia = db.query(Asistencia).filter(Asistencia.turno_id == turno_id).first()
     if not asistencia:
         raise HTTPException(404, "No hay registro de entrada para este turno")
-    asistencia.salida = datetime.utcnow()
+    ahora = utc_now_naive()
+    asistencia.salida = ahora
     turno = db.query(Turno).filter(Turno.id == turno_id).first()
     if turno:
         turno.estado = "completado"
-        turno.check_out_real = datetime.utcnow()
+        turno.check_out_real = ahora
     db.commit()
     return asistencia
 
@@ -763,26 +781,51 @@ def listar_incidentes(
         q = q.filter(Incidente.severidad == severidad)
 
     if fecha:
-        inicio = datetime.combine(fecha, time.min)
+        inicio, fin = chile_date_utc_range(fecha)
         q = q.filter(
             Incidente.reportado_en >= inicio,
-            Incidente.reportado_en < inicio + timedelta(days=1),
+            Incidente.reportado_en < fin,
         )
     else:
         if anio and mes:
-            inicio = datetime(anio, mes, 1)
-            fin = datetime(anio + (mes == 12), 1 if mes == 12 else mes + 1, 1)
+            inicio, _ = chile_date_utc_range(date(anio, mes, 1))
+            siguiente_mes = date(anio + (mes == 12), 1 if mes == 12 else mes + 1, 1)
+            fin, _ = chile_date_utc_range(siguiente_mes)
             q = q.filter(
                 Incidente.reportado_en >= inicio,
                 Incidente.reportado_en < fin,
             )
         elif anio:
+            inicio, _ = chile_date_utc_range(date(anio, 1, 1))
+            fin, _ = chile_date_utc_range(date(anio + 1, 1, 1))
             q = q.filter(
-                Incidente.reportado_en >= datetime(anio, 1, 1),
-                Incidente.reportado_en < datetime(anio + 1, 1, 1),
+                Incidente.reportado_en >= inicio,
+                Incidente.reportado_en < fin,
             )
         elif mes:
-            q = q.filter(extract("month", Incidente.reportado_en) == mes)
+            anios_utc = db.query(extract("year", Incidente.reportado_en)).distinct().all()
+            anios_locales = {
+                anio_candidato
+                for (anio_utc,) in anios_utc
+                if anio_utc is not None
+                for anio_candidato in (int(anio_utc) - 1, int(anio_utc), int(anio_utc) + 1)
+                if 1 <= anio_candidato <= 9999
+            }
+            rangos_mes = []
+            for anio_local in anios_locales:
+                inicio, _ = chile_date_utc_range(date(anio_local, mes, 1))
+                siguiente_mes = date(
+                    anio_local + (mes == 12),
+                    1 if mes == 12 else mes + 1,
+                    1,
+                )
+                fin, _ = chile_date_utc_range(siguiente_mes)
+                rangos_mes.append(and_(
+                    Incidente.reportado_en >= inicio,
+                    Incidente.reportado_en < fin,
+                ))
+            if rangos_mes:
+                q = q.filter(or_(*rangos_mes))
     return q.order_by(Incidente.reportado_en.desc()).limit(200).all()
 
 
@@ -859,7 +902,7 @@ def actualizar_incidente(incidente_id: int, data: IncidenteUpdate, db: Session =
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(incidente, k, v)
     if data.estado in ("resuelto", "cerrado"):
-        incidente.resuelto_en = datetime.utcnow()
+        incidente.resuelto_en = utc_now_naive()
     db.commit()
     return _get_incidente_completo(db, incidente.id)
 
@@ -960,14 +1003,15 @@ def eliminar_notificaciones_leidas(db: Session = Depends(get_db), current_user=D
 
 @router.get("/estadisticas/dashboard")
 def dashboard_stats(db: Session = Depends(get_db), _=Depends(require_supervisor)):
-    from sqlalchemy import func
+    inicio_hoy, fin_hoy = chile_date_utc_range(chile_today())
     return {
         "total_guardias":        db.query(Guardia).filter(Guardia.activo == True).count(),
         "guardias_activos":      db.query(Guardia).filter(Guardia.activo == True).count(),
         "total_instalaciones":   db.query(Instalacion).filter(Instalacion.activa == True).count(),
         "instalaciones_activas": db.query(Instalacion).filter(Instalacion.activa == True).count(),
         "turnos_hoy":            db.query(Turno).filter(
-                                     func.date(Turno.fecha_inicio) == func.curdate()
+                                     Turno.fecha_inicio >= inicio_hoy,
+                                     Turno.fecha_inicio < fin_hoy,
                                  ).count(),
         "incidentes_abiertos":   db.query(Incidente).filter(
                                      Incidente.estado.in_(["abierto", "reportado"])
@@ -977,6 +1021,7 @@ def dashboard_stats(db: Session = Depends(get_db), _=Depends(require_supervisor)
                                      Incidente.estado.notin_(["cerrado", "resuelto"])
                                  ).count(),
         "verificaciones_hoy":    db.query(VerificacionPunto).filter(
-                                     func.date(VerificacionPunto.verificado_en) == func.curdate()
+                                     VerificacionPunto.verificado_en >= inicio_hoy,
+                                     VerificacionPunto.verificado_en < fin_hoy,
                                  ).count(),
     }

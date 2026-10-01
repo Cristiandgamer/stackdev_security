@@ -5,7 +5,7 @@
  *  - Inputs nativos HTML5 type="date" / type="time" (24 h estricto, sin AM/PM)
  *  - Cruce de medianoche automático: si hora_fin ≤ hora_inicio → fecha_fin = fecha_inicio + 1 día
  *  - Auto-clasificación tipo (diurno / nocturno / mixto) en tiempo real
- *  - Conversión segura a ISO 8601: new Date(año, mes, día, h, min) → .toISOString()
+ *  - Conversión estable a ISO 8601 usando la zona horaria America/Santiago
  *  - Selectores de jornada y días por botones (sin dropdowns anidados)
  */
 import { useState, useEffect, useMemo } from 'react'
@@ -19,6 +19,15 @@ import {
 import toast from 'react-hot-toast'
 import { seguridadService } from '../services/api'
 import { Modal, Spinner, PageHeader, EmptyState } from '../components/index.jsx'
+import {
+  addDaysToDate as addDays,
+  formatChileDateTime,
+  formatChileTime,
+  getChileDateString,
+  getChileTimeString,
+  parseApiDateTime,
+  toChileISO as toISO,
+} from '../utils/time.js'
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
@@ -50,82 +59,17 @@ const TIPO_CONFIG = {
 
 // ── Utilidades de fecha/hora ──────────────────────────────────────────────────
 
-const TURNO_TIME_ZONE = 'America/Santiago'
-const TURNO_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: TURNO_TIME_ZONE,
-  year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-})
-const TURNO_OFFSET_FORMATTER = new Intl.DateTimeFormat('en', {
-  timeZone: TURNO_TIME_ZONE,
-  timeZoneName: 'longOffset',
-})
-
-/**
- * Agrega días a una string de fecha "YYYY-MM-DD" y retorna "YYYY-MM-DD".
- * Usa el constructor local para evitar desfases de zona horaria.
- */
-function addDays(fechaStr, days) {
-  if (!fechaStr) return ''
-  const [y, m, d] = fechaStr.split('-').map(Number)
-  const date = new Date(y, m - 1, d + days)
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-')
-}
-
-/**
- * Convierte fecha "YYYY-MM-DD" + hora "HH:MM" a ISO 8601 UTC.
- * Usa new Date(año, mes, día, hora, min) — constructor LOCAL — para que
- * la hora que el operador escribió sea la hora LOCAL del servidor/navegador.
- */
-function toISO(fechaStr, horaStr) {
-  if (!fechaStr || !horaStr) return null
-  const [y, m, d] = fechaStr.split('-').map(Number)
-  const [h, min]  = horaStr.split(':').map(Number)
-  const localTimestamp = Date.UTC(y, m - 1, d, h, min)
-  let utcTimestamp = localTimestamp
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const offset = TURNO_OFFSET_FORMATTER
-      .formatToParts(new Date(utcTimestamp))
-      .find(part => part.type === 'timeZoneName')?.value
-    const match = /GMT([+-])(\d{2}):(\d{2})/.exec(offset || '')
-    const offsetMinutes = match
-      ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]))
-      : 0
-    utcTimestamp = localTimestamp - offsetMinutes * 60000
-  }
-
-  return new Date(utcTimestamp).toISOString()
-}
-
-/** Interpreta como UTC los timestamps sin zona que devuelve la base de datos. */
-function parseServerDateTime(value) {
-  if (!value) return null
-  const timestamp = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`
-  return new Date(timestamp)
-}
-
 /**
  * Extrae "YYYY-MM-DD" de un DateTime del servidor (ISO 8601).
- * Usa el tiempo LOCAL del cliente para mostrar la fecha correcta.
+ * Presenta la fecha en la zona horaria de Chile.
  */
 function isoToDate(iso) {
-  if (!iso) return ''
-  const d = parseServerDateTime(iso)
-  const parts = Object.fromEntries(TURNO_DATE_TIME_FORMATTER.formatToParts(d).map(part => [part.type, part.value]))
-  return `${parts.year}-${parts.month}-${parts.day}`
+  return getChileDateString(iso)
 }
 
 /** Extrae "HH:MM" (24h) de un DateTime del servidor. */
 function isoToTime(iso) {
-  if (!iso) return ''
-  const d = parseServerDateTime(iso)
-  const parts = Object.fromEntries(TURNO_DATE_TIME_FORMATTER.formatToParts(d).map(part => [part.type, part.value]))
-  return `${parts.hour}:${parts.minute}`
+  return iso ? getChileTimeString(iso) : ''
 }
 
 /**
@@ -152,18 +96,14 @@ function calcularTipo(horaInicio, horaFin, cruzaMedianoche) {
 /** Calcula la duración en horas entre dos datetime strings ISO. */
 function calcularDuracionHoras(inicio, fin) {
   if (!inicio || !fin) return null
-  const diff = (parseServerDateTime(fin) - parseServerDateTime(inicio)) / 3600000
+  const diff = (parseApiDateTime(fin) - parseApiDateTime(inicio)) / 3600000
   return diff > 0 ? diff : null
 }
 
 /** Formatea un datetime ISO para mostrar en la lista de turnos. */
 function formatFecha(iso) {
   if (!iso) return '—'
-  return parseServerDateTime(iso).toLocaleString('es-CL', {
-    timeZone: TURNO_TIME_ZONE,
-    day: '2-digit', month: 'short',
-    hour: '2-digit', minute: '2-digit',
-  })
+  return formatChileDateTime(iso, { month: 'short', year: undefined })
 }
 
 // ── Formulario de turno ───────────────────────────────────────────────────────
@@ -279,7 +219,7 @@ function FormTurno({ inicial, guardias, instalaciones, onClose, onSuccess }) {
     if (!form.fecha_inicio)   return toast.error('Ingrese la fecha de inicio')
     if (!form.hora_inicio)    return toast.error('Ingrese la hora de entrada')
     if (!form.hora_fin)       return toast.error('Ingrese la hora de salida')
-    if (!isoInicio || !isoFin) return toast.error('Fechas y horas inválidas')
+    if (!isoInicio || !isoFin) return toast.error('La hora seleccionada no es válida para la zona horaria de Chile en esa fecha.')
 
     mutate({
       guardia_id:     Number(form.guardia_id),

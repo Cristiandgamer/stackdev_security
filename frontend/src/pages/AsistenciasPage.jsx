@@ -29,6 +29,13 @@ import { asistenciaService, seguridadService } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { Modal, Spinner, EmptyState } from '../components/index.jsx'
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx'
+import {
+  chileDateTimeLocalToISO,
+  chileDateTimeLocalValue,
+  formatChileDateTime,
+  formatChileTime,
+  getChileDateString,
+} from '../utils/time.js'
 
 // ══════════════════════════════════════════════════════════════════════════════
 // HELPER — normaliza cualquier respuesta a array
@@ -46,20 +53,11 @@ function toArray(value) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function fmt(dt, opts = {}) {
-  if (!dt) return '—'
-  const d = new Date(dt)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleString('es-CL', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', ...opts,
-  })
+  return formatChileDateTime(dt, opts)
 }
 
 function fmtHora(dt) {
-  if (!dt) return '—'
-  const d = new Date(dt)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+  return formatChileTime(dt)
 }
 
 function fmtMin(mins) {
@@ -696,17 +694,24 @@ function ModalAjuste({ item, onClose, onGuardado }) {
   const [form, setForm] = useState({
     estado: item.estado_asistencia || 'sin_marcar',
     observacion: '',
-    entrada: item.entrada ? new Date(item.entrada).toISOString().slice(0, 16) : '',
+    entrada: item.entrada ? chileDateTimeLocalValue(item.entrada) : '',
     salida: '',
   })
 
   const { mutate, isPending } = useMutation({
-    mutationFn: () => asistenciaService.ajusteManual(item.asistencia_id, {
-      estado:      form.estado,
-      observacion: form.observacion || undefined,
-      entrada:     form.entrada ? new Date(form.entrada).toISOString() : undefined,
-      salida:      form.salida  ? new Date(form.salida).toISOString()  : undefined,
-    }),
+    mutationFn: () => {
+      const entrada = form.entrada ? chileDateTimeLocalToISO(form.entrada) : undefined
+      const salida = form.salida ? chileDateTimeLocalToISO(form.salida) : undefined
+      if ((form.entrada && !entrada) || (form.salida && !salida)) {
+        throw new Error('La hora seleccionada no existe en la zona horaria de Chile para esa fecha.')
+      }
+      return asistenciaService.ajusteManual(item.asistencia_id, {
+        estado: form.estado,
+        observacion: form.observacion || undefined,
+        entrada,
+        salida,
+      })
+    },
     onSuccess: () => { toast.success('Asistencia ajustada'); onGuardado(); onClose() },
     onError:   (e) => toast.error(e.response?.data?.detail || e.message),
   })
@@ -831,8 +836,8 @@ function PanelConfig({ config, onActualizado }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function PanelExportar({ instalaciones, guardias }) {
-  const hoy          = new Date().toISOString().slice(0, 10)
-  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+  const hoy          = getChileDateString()
+  const primerDiaMes = `${hoy.slice(0, 7)}-01`
   const [form, setForm]           = useState({ fecha_inicio: primerDiaMes, fecha_fin: hoy, guardia_id: '', instalacion_id: '', formato: 'excel' })
   const [descargando, setDescargando] = useState(false)
 
@@ -932,7 +937,7 @@ export default function AsistenciasPage() {
   const isAdmin    = ['admin', 'supervisor'].includes(user?.rol)
   const [tabAdmin, setTabAdmin]     = useState('live')
   const [ajusteItem, setAjusteItem] = useState(null)
-  const [fechaLive, setFechaLive]   = useState(new Date().toISOString().slice(0, 10))
+  const [fechaLive, setFechaLive]   = useState(getChileDateString)
   const [instalacionLive, setInstalacionLive] = useState('')
 
   // ── Datos base ─────────────────────────────────────────────────────────────
@@ -1108,7 +1113,7 @@ export default function AsistenciasPage() {
               </select>
               {dataUpdatedAt > 0 && (
                 <span className="text-[#94a3b8] text-xs ml-auto">
-                  Actualizado: {new Date(dataUpdatedAt).toLocaleTimeString('es-CL')}
+                  Actualizado: {formatChileTime(new Date(dataUpdatedAt), { second: '2-digit' })}
                   <span className="ml-1 text-[#475569]">(auto 30s)</span>
                 </span>
               )}
@@ -1229,7 +1234,7 @@ function HistorialGuardia() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function HistorialAdmin({ instalaciones, guardias, onAjuste }) {
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = getChileDateString()
   const [filtros, setFiltros] = useState({
     fecha_inicio: hoy, fecha_fin: hoy,
     guardia_id: '', instalacion_id: '', estado: '',

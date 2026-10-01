@@ -10,13 +10,11 @@ import toast from 'react-hot-toast'
 import { seguridadService, asistenciaService } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { Spinner } from '../components/index.jsx'
+import { formatChileDate, formatChileTime, getChileDateString, getChileHour } from '../utils/time.js'
 
 // ── Helper fecha ──────────────────────────────────────────────────────────────
 function fmtHora(dt) {
-  if (!dt) return '—'
-  const d = new Date(dt)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+  return formatChileTime(dt)
 }
 
 function fmtMin(mins) {
@@ -146,7 +144,7 @@ function WidgetAsistencia({ navigate }) {
 
 // ── Widget resumen asistencia hoy (solo admin/supervisor) ─────────────────────
 function WidgetAsistenciaAdmin({ navigate }) {
-  const hoy = new Date().toLocaleDateString('en-CA')
+  const hoy = getChileDateString()
 
   const { data: stats } = useQuery({
     queryKey: ['asistencia-stats-dashboard', hoy],
@@ -250,7 +248,7 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   })
 
-  const hora = new Date().getHours()
+  const hora = getChileHour()
   const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches'
   const notifUnreadCount = notifData?.length ?? 0
 
@@ -267,7 +265,7 @@ export default function DashboardPage() {
             {saludo}, {user?.nombre}
           </h1>
           <p className="text-[#94a3b8]">
-            {new Date().toLocaleDateString('es-CL', {
+            {formatChileDate(new Date(), {
               weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
             })}
           </p>
@@ -292,9 +290,9 @@ export default function DashboardPage() {
                 <p className="text-green-400 font-semibold text-sm uppercase tracking-wide">Turno activo</p>
                 <p className="text-white font-bold">{turnoData.instalacion?.nombre}</p>
                 <p className="text-[#94a3b8] text-sm">
-                  {new Date(turnoData.fecha_inicio).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+                  {formatChileTime(turnoData.fecha_inicio)}
                   {' — '}
-                  {new Date(turnoData.fecha_fin).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+                  {formatChileTime(turnoData.fecha_fin)}
                 </p>
               </div>
             </div>

@@ -9,6 +9,7 @@ import {
 import toast from "react-hot-toast";
 import { useAuthStore } from "../store/authStore";
 import { seguridadService } from "../services/api";
+import { formatChileDateTime } from "../utils/time.js";
 
 // Destinos alineados con las rutas declaradas en App.jsx.
 const navItems = [
@@ -102,7 +103,7 @@ function NotificationDropdown({ show, onClose, notifications, notifCount, loadin
                     <p className="text-sm font-semibold text-white truncate">{notif.titulo}</p>
                   </div>
                   <p className="text-xs text-slate-500">
-                    {new Date(notif.created_at).toLocaleString("es-CL", {
+                    {formatChileDateTime(notif.created_at, {
                       day: "2-digit", month: "2-digit", year: "numeric",
                       hour: "2-digit", minute: "2-digit",
                     })}
