@@ -588,7 +588,7 @@ function NuevoIncidenteForm({ onClose, instalaciones }) {
         <button type="submit" disabled={isPending} className="btn-danger flex-1">
           {isPending
             ? `Reportando${archivos.length > 0 ? ` (${archivos.length} archivo${archivos.length > 1 ? 's' : ''})` : ''}…`
-            : '⚠️ Reportar incidente'}
+            : ' Reportar incidente'}
         </button>
       </div>
     </form>
@@ -617,6 +617,7 @@ function AvisoSinGuardia() {
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function IncidentesPage() {
   const [abrirForm, setAbrirForm]             = useState(false)
+  const [mostrarFiltros, setMostrarFiltros]   = useState(false)
   const [filtroEstado, setFiltroEstado]       = useState('')
   const [filtroSeveridad, setFiltroSeveridad] = useState('')
   const [filtroFecha, setFiltroFecha]         = useState('')
@@ -659,6 +660,8 @@ export default function IncidentesPage() {
   })
 
   const tieneGuardia = isAdmin || !!miFicha
+  const filtrosActivos = [filtroEstado, filtroSeveridad, filtroFecha, filtroMes, filtroAnio]
+    .filter(Boolean).length
 
   const handleAbrirForm = () => {
     if (!isAdmin && !cargandoFicha && !tieneGuardia) {
@@ -715,58 +718,80 @@ export default function IncidentesPage() {
 
       {/* Filtros */}
       <div className="flex gap-3 flex-wrap items-center">
-        <Filter className="w-4 h-4 text-[#94a3b8]" />
-        <select className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-          <option value="">Todos los estados</option>
-          {['reportado','investigando','resuelto','cerrado'].map((e) =>
-            <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>
-          )}
-        </select>
-        <select className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroSeveridad} onChange={(e) => setFiltroSeveridad(e.target.value)}>
-          <option value="">Todas las severidades</option>
-          {SEVERIDADES.map((s) =>
-            <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-          )}
-        </select>
-        <input
-          type="date"
-          aria-label="Filtrar incidentes por fecha"
-          className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroFecha}
-          onChange={(e) => {
-            setFiltroFecha(e.target.value)
-            if (e.target.value) { setFiltroMes(''); setFiltroAnio('') }
-          }}
-        />
-        <select
-          aria-label="Filtrar incidentes por mes"
-          className="input-field !w-auto !min-h-0 py-2 text-sm"
-          value={filtroMes}
-          onChange={(e) => { setFiltroMes(e.target.value); setFiltroFecha('') }}
+        <button
+          type="button"
+          aria-label={mostrarFiltros ? 'Ocultar filtros' : 'Mostrar filtros'}
+          aria-expanded={mostrarFiltros}
+          onClick={() => setMostrarFiltros((visible) => !visible)}
+          className="btn-ghost !p-2 relative"
+          title={mostrarFiltros ? 'Ocultar filtros' : 'Mostrar filtros'}
         >
-          <option value="">Todos los meses</option>
-          {MESES.map((mes, index) => <option key={mes} value={index + 1}>{mes}</option>)}
-        </select>
-        <input
-          type="number"
-          aria-label="Filtrar incidentes por año"
-          placeholder="Año"
-          min="1900"
-          max="9999"
-          className="input-field !w-28 !min-h-0 py-2 text-sm"
-          value={filtroAnio}
-          onChange={(e) => { setFiltroAnio(e.target.value); setFiltroFecha('') }}
-        />
-        {(filtroFecha || filtroMes || filtroAnio) && (
-          <button
-            type="button"
-            className="btn-ghost !py-2 !px-3 text-sm"
-            onClick={() => { setFiltroFecha(''); setFiltroMes(''); setFiltroAnio('') }}
-          >
-            Limpiar fecha
-          </button>
+          <Filter className="w-5 h-5 text-[#94a3b8]" />
+          {filtrosActivos > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-brand text-[10px] leading-4 text-white">
+              {filtrosActivos}
+            </span>
+          )}
+        </button>
+        {mostrarFiltros && (
+          <div className="flex gap-3 flex-wrap items-center">
+            <select className="input-field !w-auto !min-h-0 py-2 text-sm"
+              value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
+              <option value="">Todos los estados</option>
+              {['reportado','investigando','resuelto','cerrado'].map((e) =>
+                <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>
+              )}
+            </select>
+            <select className="input-field !w-auto !min-h-0 py-2 text-sm"
+              value={filtroSeveridad} onChange={(e) => setFiltroSeveridad(e.target.value)}>
+              <option value="">Todas las severidades</option>
+              {SEVERIDADES.map((s) =>
+                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+              )}
+            </select>
+            <input
+              type="date"
+              aria-label="Filtrar incidentes por fecha"
+              className="input-field !w-auto !min-h-0 py-2 text-sm"
+              value={filtroFecha}
+              onChange={(e) => {
+                setFiltroFecha(e.target.value)
+                if (e.target.value) { setFiltroMes(''); setFiltroAnio('') }
+              }}
+            />
+            <select
+              aria-label="Filtrar incidentes por mes"
+              className="input-field !w-auto !min-h-0 py-2 text-sm"
+              value={filtroMes}
+              onChange={(e) => { setFiltroMes(e.target.value); setFiltroFecha('') }}
+            >
+              <option value="">Todos los meses</option>
+              {MESES.map((mes, index) => <option key={mes} value={index + 1}>{mes}</option>)}
+            </select>
+            <label className="flex items-center gap-2 text-sm text-[#94a3b8]">
+              Año
+              <input
+                type="number"
+                aria-label="Filtrar incidentes por año"
+                placeholder="Ej. 2026"
+                min="1900"
+                max="9999"
+                step="1"
+                className="input-field !w-32 !min-h-0 py-2 text-sm"
+                value={filtroAnio}
+                onChange={(e) => { setFiltroAnio(e.target.value); setFiltroFecha('') }}
+              />
+            </label>
+            {(filtroFecha || filtroMes || filtroAnio) && (
+              <button
+                type="button"
+                className="btn-ghost !py-2 !px-3 text-sm"
+                onClick={() => { setFiltroFecha(''); setFiltroMes(''); setFiltroAnio('') }}
+              >
+                Limpiar fecha
+              </button>
+            )}
+          </div>
         )}
       </div>
 
